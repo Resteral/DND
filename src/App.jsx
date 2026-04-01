@@ -20,6 +20,7 @@ function VTTSession() {
   const [showFog, setShowFog] = useState(false);
   const [showTorches, setShowTorches] = useState(false);
   const [vfxs, setVfxs] = useState([]);
+  const [connectionStatus, setConnectionStatus] = useState('connecting');
   const channelRef = useRef(null);
 
   const [characters, setCharacters] = useState([
@@ -31,6 +32,11 @@ function VTTSession() {
 
   useEffect(() => {
     const channelId = params.get('room') || 'default-room-1';
+    
+    // Check if Supabase is real or mock
+    const isMock = !import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_URL.startsWith('https');
+    setConnectionStatus(isMock ? 'mock' : 'real');
+
     channelRef.current = supabase.channel(channelId);
 
     channelRef.current
@@ -47,7 +53,9 @@ function VTTSession() {
       .on('broadcast', { event: 'vfx-spell' }, ({ payload }) => { setVfxs(prev => [...prev, payload]); })
       .on('broadcast', { event: 'toggle-fog' }, ({ payload }) => { setShowFog(payload.showFog); })
       .on('broadcast', { event: 'toggle-torch' }, ({ payload }) => { setShowTorches(payload.showTorches); })
-      .subscribe();
+      .subscribe((status) => {
+         if (status === 'SUBSCRIBED') setConnectionStatus(isMock ? 'mock' : 'connected');
+      });
 
     return () => { supabase.removeChannel(channelRef.current); };
   }, [params]);
@@ -59,29 +67,18 @@ function VTTSession() {
       setCharacters(prev => [...prev, { ...c, id, color: '#c5a059', position: [Math.random()*4-2, 0, Math.random()*4-2] }]);
       setSelectedId(id);
     } catch (e) {
-      alert(`Import Failed: ${e.message}`);
+      alert(`The weave is thinning: ${e.message}`);
     }
   };
-
-  const handleUpdateInitiative = (newInit) => {
-    setInitiative(newInit);
-    channelRef.current?.send({ type: 'broadcast', event: 'initiative-sync', payload: { initiative: newInit } });
-  };
-
-  const handleTrackChange = (track) => {
-    setActiveTrack(track);
-    channelRef.current?.send({ type: 'broadcast', event: 'track-sync', payload: { track } });
-  };
-
-  useEffect(() => {
-    if (activeTrack) {
-       // In a full app, you would play audio here and handle user interaction for autoplay
-       console.log('Synchronized Atmosphere Track:', activeTrack.name);
-    }
-  }, [activeTrack]);
 
   return (
     <>
+      <div style={{ position: 'fixed', top: '10px', left: '50%', transform: 'translateX(-50%)', zIndex: 10000, pointerEvents: 'none', display: 'flex', gap: '1rem' }}>
+         <div style={{ background: 'rgba(0,0,0,0.85)', padding: '4px 12px', borderRadius: '50px', fontSize: '10px', color: connectionStatus === 'mock' ? '#ffb700' : (connectionStatus === 'connected' ? '#4bff4b' : '#ff4b4b'), border: `1px solid ${connectionStatus === 'mock' ? '#ffb700' : 'rgba(255,255,255,0.1)'}`, backdropFilter: 'blur(10px)' }}>
+            ● {connectionStatus === 'mock' ? 'LOCAL MODE (ENVs MISSING)' : (connectionStatus === 'connected' ? 'REALM SYNCED' : 'CONNECTING...')}
+         </div>
+      </div>
+
       <Scene 
         characters={characters} roomType={roomType} 
         onSelectCharacter={setSelectedId} onMoveCharacter={(id, pos) => {
@@ -114,7 +111,14 @@ function VTTSession() {
            setChatHistory(prev => [...prev, chat].slice(-15));
            channelRef.current?.send({ type: 'broadcast', event: 'chat-msg', payload: chat });
         }}
-        onInitiativeUpdate={handleUpdateInitiative} onTrackChange={handleTrackChange}
+        onInitiativeUpdate={(newInit) => {
+           setInitiative(newInit);
+           channelRef.current?.send({ type: 'broadcast', event: 'initiative-sync', payload: { initiative: newInit } });
+        }} 
+        onTrackChange={(track) => {
+           setActiveTrack(track);
+           channelRef.current?.send({ type: 'broadcast', event: 'track-sync', payload: { track } });
+        }}
         showFog={showFog} showTorches={showTorches} chatHistory={chatHistory}
         onSaveSound={(id, url) => setCharacters(prev => prev.map(c => (c.id ?? 0) === id ? { ...c, soundUrl: url } : c))}
         onSaveDungeon={async (name) => await dungeonService.saveDungeon(name, { characters, roomType, initiative })} 
