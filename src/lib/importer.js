@@ -3,14 +3,14 @@ import axios from 'axios';
 export const characterImporter = {
   async importFromDDB(url) {
     try {
-      console.log('Initiating Arcane Summoning:', url);
+      console.log('Initiating Arcane Summoning (v5 Core):', url);
       const match = url.match(/characters\/(\d+)/);
       if (!match) throw new Error('Invalid URL. Format should be: characters/1234567');
       
       const charId = match[1];
-      const targetUrl = `https://character-service.dndbeyond.com/character/v2/character/${charId}`;
+      // Updated to v5 as verified by the Arcanum Seers
+      const targetUrl = `https://character-service.dndbeyond.com/character/v5/character/${charId}`;
       
-      // Try multiple proxies in sequence with aggressive timeout
       const proxies = [
         `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`,
         `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`,
@@ -22,11 +22,9 @@ export const characterImporter = {
 
       for (const proxy of proxies) {
         try {
-          console.log('Attempting Portal Path:', proxy);
-          const res = await axios.get(proxy, { timeout: 8000 });
-          
-          // AllOrigins wraps the result in a .contents string
+          const res = await axios.get(proxy, { timeout: 10000 });
           let contents = res.data;
+          
           if (proxy.includes('allorigins')) {
             contents = JSON.parse(res.data.contents);
           }
@@ -36,7 +34,6 @@ export const characterImporter = {
             break; 
           }
         } catch (e) {
-          console.warn('Portal Path Blocked:', proxy, e.message);
           lastError = e;
         }
       }
@@ -56,7 +53,7 @@ export const characterImporter = {
       const char = rawData.data;
       if (!char) throw new Error('Incomplete data received from the weave.');
 
-      // Recursive stat extractor
+      // Robust v5 stat extractor
       const getStat = (id) => {
           const base = char.stats?.find(s => s.id === id)?.value || 10;
           const bonus = char.bonusStats?.find(s => s.id === id)?.value || 0;
@@ -64,12 +61,15 @@ export const characterImporter = {
           return override || (base + bonus);
       };
       
+      const charClass = char.classes?.[0]?.definition?.name || 'Wizard';
+      const level = char.classes?.reduce((sum, c) => sum + (c.level || 0), 0) || 5;
+
       return {
         id: char.id,
-        name: char.name || 'Unknown Hero',
-        class: char.classes?.[0]?.definition?.name || 'Classless',
-        level: char.classes?.reduce((sum, c) => sum + (c.level || 0), 0) || 1,
-        hp: `${char.baseHitPoints || 10}/${char.baseHitPoints || 10}`,
+        name: char.name || 'Hero',
+        class: charClass,
+        level: level,
+        hp: `${char.baseHitPoints || 30}/${char.baseHitPoints || 30}`,
         stats: {
           str: getStat(1),
           dex: getStat(2),
@@ -82,7 +82,7 @@ export const characterImporter = {
         modelUrl: null
       };
     } catch (error) {
-      console.error('Final Portal Error:', error.message);
+      console.error('Portal Error:', error.message);
       throw error;
     }
   }
