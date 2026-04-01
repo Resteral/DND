@@ -20,55 +20,45 @@ function VTTSession() {
   const [showFog, setShowFog] = useState(false);
   const [showTorches, setShowTorches] = useState(false);
   const [vfxs, setVfxs] = useState([]);
+  const [activeSpell, setActiveSpell] = useState(null);
   const [connectionStatus, setConnectionStatus] = useState('connecting');
   const channelRef = useRef(null);
 
   const [characters, setCharacters] = useState([
-    { 
-      id: 0, name: 'Turok the Brave', color: '#ff4b4b', level: 5, class: 'Barbarian', 
-      position: [0, 0, 0], hp: '54/54', stats: { str: 18, dex: 14, con: 16, int: 8, wis: 10, cha: 12 }
-    }
+    { id: 0, name: 'Turok the Brave', color: '#ff4b4b', level: 5, class: 'Barbarian', position: [0, 0, 0], hp: '54/54', stats: { str: 18, dex: 14, con: 16, int: 8, wis: 10, cha: 12 } }
   ]);
 
   useEffect(() => {
     const channelId = params.get('room') || 'default-room-1';
-    
-    // Check if Supabase is real or mock
     const isMock = !import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_URL.startsWith('https');
     setConnectionStatus(isMock ? 'mock' : 'real');
 
     channelRef.current = supabase.channel(channelId);
-
     channelRef.current
-      .on('broadcast', { event: 'token-move' }, ({ payload }) => {
-        setCharacters(prev => prev.map(c => (c.id === payload.charId) ? { ...c, position: payload.newPosition } : c));
-      })
-      .on('broadcast', { event: 'dice-roll' }, ({ payload }) => {
-        setActiveDice(prev => [...prev, { id: payload.diceId, sides: payload.sides, position: payload.position }]);
-        setDiceHistory(prev => [{ id: payload.diceId, entity: payload.entity, label: payload.label, sides: payload.sides, result: null, time: new Date().toLocaleTimeString() }, ...prev.slice(0, 10)]);
-      })
+      .on('broadcast', { event: 'token-move' }, ({ payload }) => { setCharacters(prev => prev.map(c => (c.id === payload.charId) ? { ...c, position: payload.newPosition } : c)); })
+      .on('broadcast', { event: 'dice-roll' }, ({ payload }) => { setActiveDice(prev => [...prev, { id: payload.diceId, sides: payload.sides, position: payload.position }]); setDiceHistory(prev => [{ id: payload.diceId, entity: payload.entity, label: payload.label, sides: payload.sides, result: null, time: new Date().toLocaleTimeString() }, ...prev.slice(0, 10)]); })
       .on('broadcast', { event: 'chat-msg' }, ({ payload }) => { setChatHistory(prev => [...prev, payload].slice(-15)); })
       .on('broadcast', { event: 'initiative-sync' }, ({ payload }) => { setInitiative(payload.initiative); })
       .on('broadcast', { event: 'track-sync' }, ({ payload }) => { setActiveTrack(payload.track); })
       .on('broadcast', { event: 'vfx-spell' }, ({ payload }) => { setVfxs(prev => [...prev, payload]); })
       .on('broadcast', { event: 'toggle-fog' }, ({ payload }) => { setShowFog(payload.showFog); })
       .on('broadcast', { event: 'toggle-torch' }, ({ payload }) => { setShowTorches(payload.showTorches); })
-      .subscribe((status) => {
-         if (status === 'SUBSCRIBED') setConnectionStatus(isMock ? 'mock' : 'connected');
-      });
-
+      .subscribe((status) => { if (status === 'SUBSCRIBED') setConnectionStatus(isMock ? 'mock' : 'connected'); });
     return () => { supabase.removeChannel(channelRef.current); };
   }, [params]);
 
-  const handleImport = async (url) => {
-    try {
-      const c = await characterImporter.importFromDDB(url);
-      const id = characters.length;
-      setCharacters(prev => [...prev, { ...c, id, color: '#c5a059', position: [Math.random()*4-2, 0, Math.random()*4-2] }]);
-      setSelectedId(id);
-    } catch (e) {
-      alert(`The weave is thinning: ${e.message}`);
-    }
+  const handleCastAtPos = (pos, color) => {
+    setActiveSpell(null);
+    const vfx = { id: Date.now(), position: [pos.x, 0.5, pos.z], color };
+    setVfxs(prev => [...prev, vfx]);
+    channelRef.current?.send({ type: 'broadcast', event: 'vfx-spell', payload: vfx });
+    handleSendMessage(`Cast fireball at target location!`, 'Spellcaster');
+  };
+
+  const handleSendMessage = (text, sender = 'DM') => {
+    const chat = { id: Date.now(), sender, text, time: new Date().toLocaleTimeString() };
+    setChatHistory(prev => [...prev, chat].slice(-15));
+    channelRef.current?.send({ type: 'broadcast', event: 'chat-msg', payload: chat });
   };
 
   return (
@@ -80,58 +70,23 @@ function VTTSession() {
       </div>
 
       <Scene 
-        characters={characters} roomType={roomType} 
-        onSelectCharacter={setSelectedId} onMoveCharacter={(id, pos) => {
-          setCharacters(prev => prev.map(c => (c.id === id) ? { ...c, position: pos } : c));
-          channelRef.current?.send({ type: 'broadcast', event: 'token-move', payload: { charId: id, newPosition: pos } });
-        }}
-        selectedId={selectedId} activeDice={activeDice} onDiceResult={(id, res) => setDiceHistory(prev => prev.map(r => r.id === id ? { ...r, result: res } : r))}
-        showFog={showFog} showTorches={showTorches} vfxs={vfxs} onCompleteVFX={(id) => setVfxs(prev => prev.filter(v => v.id !== id))}
+        characters={characters} roomType={roomType} selectedId={selectedId} activeDice={activeDice} showFog={showFog} showTorches={showTorches} vfxs={vfxs} activeSpell={activeSpell}
+        onSelectCharacter={setSelectedId} 
+        onDiceResult={(id, res) => setDiceHistory(prev => prev.map(r => r.id === id ? { ...r, result: res } : r))}
+        onMoveCharacter={(id, pos) => { setCharacters(prev => prev.map(c => (c.id === id) ? { ...c, position: pos } : c)); channelRef.current?.send({ type: 'broadcast', event: 'token-move', payload: { charId: id, newPosition: pos } }); }}
+        onCompleteVFX={(id) => setVfxs(prev => prev.filter(v => v.id !== id))}
+        onCastSpell={handleCastAtPos}
       />
       <UIOverlay 
-        onImportSuccess={handleImport} onRoomChange={setRoomType} onSpawnProp={(p) => setCharacters(prev => [...prev, { ...p, id: characters.length, type: 'prop' }])}
-        onRollPhysics={(sides, label) => {
-          const diceId = Date.now();
-          const entity = selectedId !== null ? (characters.find(c => (c.id ?? 0) === selectedId)?.name || 'Adventurer') : 'Adventurer';
-          const position = [Math.random()*2-1, 6, Math.random()*2-1];
-          setActiveDice(prev => [...prev, { id: diceId, sides, position }]);
-          setDiceHistory(prev => [{ id: diceId, entity, label, sides, result: null, time: new Date().toLocaleTimeString() }, ...prev.slice(0, 10)]);
-          channelRef.current?.send({ type: 'broadcast', event: 'dice-roll', payload: { diceId, sides, position, entity, label } });
-        }} 
-        onClearDice={() => setActiveDice([])} onToggleFog={() => {
-           const newState = !showFog; setShowFog(newState);
-           channelRef.current?.send({ type: 'broadcast', event: 'toggle-fog', payload: { showFog: newState } });
-        }} 
-        onToggleTorches={() => {
-           const newState = !showTorches; setShowTorches(newState);
-           channelRef.current?.send({ type: 'broadcast', event: 'toggle-torch', payload: { showTorches: newState } });
-        }}
-        onSendMessage={(text) => {
-           const chat = { id: Date.now(), sender: 'DM', text, time: new Date().toLocaleTimeString() };
-           setChatHistory(prev => [...prev, chat].slice(-15));
-           channelRef.current?.send({ type: 'broadcast', event: 'chat-msg', payload: chat });
-        }}
-        onInitiativeUpdate={(newInit) => {
-           setInitiative(newInit);
-           channelRef.current?.send({ type: 'broadcast', event: 'initiative-sync', payload: { initiative: newInit } });
-        }} 
-        onTrackChange={(track) => {
-           setActiveTrack(track);
-           channelRef.current?.send({ type: 'broadcast', event: 'track-sync', payload: { track } });
-        }}
-        showFog={showFog} showTorches={showTorches} chatHistory={chatHistory}
-        onSaveSound={(id, url) => setCharacters(prev => prev.map(c => (c.id ?? 0) === id ? { ...c, soundUrl: url } : c))}
-        onSaveDungeon={async (name) => await dungeonService.saveDungeon(name, { characters, roomType, initiative })} 
-        onLoadDungeon={async (id) => { const data = await dungeonService.loadDungeon(id); if (data?.config) { setCharacters(data.config.characters); setRoomType(data.config.roomType); setInitiative(data.config.initiative || []); } }} 
-        onCastSpell={(color) => {
-           if (selectedId === null) return;
-           const char = characters.find(c => (c.id ?? 0) === selectedId);
-           if (!char) return;
-           const vfx = { id: Date.now(), position: [char.position[0], 1.2, char.position[2]], color };
-           setVfxs(prev => [...prev, vfx]);
-           channelRef.current?.send({ type: 'broadcast', event: 'vfx-spell', payload: vfx });
-        }}
-        roomType={roomType} characters={characters} selectedId={selectedId} diceHistory={diceHistory} initiative={initiative} activeTrack={activeTrack}
+        characters={characters} roomType={roomType} selectedId={selectedId} diceHistory={diceHistory} initiative={initiative} activeTrack={activeTrack} chatHistory={chatHistory} showFog={showFog} showTorches={showTorches} activeSpell={activeSpell}
+        onImportSuccess={async (url) => { try { const c = await characterImporter.importFromDDB(url); const id = characters.length; setCharacters(prev => [...prev, { ...c, id, color: '#c5a059', position: [Math.random()*4-2, 0, Math.random()*4-2] }]); setSelectedId(id); } catch(e) { alert(e.message); } }}
+        onRoomChange={setRoomType} onRollPhysics={(sides, label) => { const id = Date.now(); const pos=[Math.random()*2-1, 6, Math.random()*2-1]; setActiveDice(prev=>[...prev, {id, sides, position:pos}]); channelRef.current?.send({type:'broadcast', event:'dice-roll', payload:{diceId:id, sides, position:pos, entity:'User', label}}); }}
+        onClearDice={() => setActiveDice([])} onToggleFog={() => { const s = !showFog; setShowFog(s); channelRef.current?.send({type:'broadcast', event:'toggle-fog', payload:{showFog:s}}); }}
+        onToggleTorches={() => { const s = !showTorches; setShowTorches(s); channelRef.current?.send({type:'broadcast', event:'toggle-torch', payload:{showTorches:s}}); }}
+        onSendMessage={handleSendMessage} onInitiativeUpdate={(newInit) => { setInitiative(newInit); channelRef.current?.send({type:'broadcast', event:'initiative-sync', payload:{initiative:newInit}}); }} 
+        onTrackChange={(track) => { setActiveTrack(track); channelRef.current?.send({type:'broadcast', event:'track-sync', payload:{track}}); }}
+        onSetSpellTarget={setActiveSpell}
+        onCastSpell={(color) => { if (selectedId === null) return; const char = characters.find(c => (c.id ?? 0) === selectedId); if (!char) return; const vfx = { id: Date.now(), position: [char.position[0], 1.2, char.position[2]], color }; setVfxs(prev => [...prev, vfx]); channelRef.current?.send({ type: 'broadcast', event: 'vfx-spell', payload: vfx }); }}
       />
     </>
   );

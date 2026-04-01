@@ -1,123 +1,158 @@
-import React, { Suspense, useMemo, useState, useRef, useCallback } from 'react';
-import { Canvas, useFrame } from '@react-three/fiber';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { 
-  OrbitControls, 
-  Grid, 
-  Environment, 
-  ContactShadows, 
-  Text, 
-  Float,
-  Html
+  OrbitControls, PerspectiveCamera, Environment, Stars, Float, Text, 
+  Circle, Sparkles, ContactShadows, useGLTF, RoundedBox, Torus
 } from '@react-three/drei';
-import { Bloom, EffectComposer } from '@react-three/postprocessing';
-import { Physics, usePlane } from '@react-three/cannon';
-import PhysicsDice from './PhysicsDice';
-import { SpellVFX } from './VFX';
-import ModelLoader from './ModelLoader';
+import { Physics, useSphere, useBox, usePlane } from '@react-three/cannon';
 import * as THREE from 'three';
+import ModelLoader from './ModelLoader';
+import PhysicsDice from './PhysicsDice';
 
-const ProceduralRoom = ({ type = 'dungeon', seed = 0 }) => {
-  const tiles = useMemo(() => {
-    const items = [];
-    const size = 5;
-    for (let x = -size; x <= size; x++) {
-      for (let z = -size; z <= size; z++) {
-        const h = Math.random() * 0.1;
-        const color = type === 'tavern' ? '#5a3825' : '#2a2a2a';
-        items.push({ x, z, h, color });
-      }
-    }
-    return items;
-  }, [type, seed]);
-
-  return (
-    <group>
-      {tiles.map((tile, i) => (
-        <mesh key={i} position={[tile.x, tile.h / 2, tile.z]}>
-          <boxGeometry args={[0.95, 0.1 + tile.h, 0.95]} />
-          <meshStandardMaterial color={tile.color} roughness={0.8} metalness={0.2} emissive={tile.color} emissiveIntensity={0.05} />
-        </mesh>
-      ))}
-      <mesh position={[0, 1, -5.5]}><boxGeometry args={[11, 2, 0.2]} /><meshStandardMaterial color="#1a1a1a" /></mesh>
-      <mesh position={[-5.5, 1, 0]} rotation={[0, Math.PI / 2, 0]}><boxGeometry args={[11, 2, 0.2]} /><meshStandardMaterial color="#1a1a1a" /></mesh>
-    </group>
-  );
-};
-
-const PhysicsFloor = ({ onGridClick, showFog = false }) => {
-  const [ref] = usePlane(() => ({ rotation: [-Math.PI / 2, 0, 0], position: [0, 0, 0] }));
-  return (
-    <group>
-      <mesh ref={ref} receiveShadow onClick={(e) => { e.stopPropagation(); onGridClick(e.point); }}>
-        <planeGeometry args={[100, 100]} />
-        <meshStandardMaterial color="#0b0810" transparent opacity={0.1} />
-      </mesh>
-      {showFog && (
-        <mesh position={[0, 2.5, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-           <planeGeometry args={[40, 40]} />
-           <meshStandardMaterial color="#08050a" transparent opacity={0.9} />
-        </mesh>
-      )}
-    </group>
-  );
-};
-
-const CharacterToken = ({ 
-  position = [0, 0, 0], name = 'Adventurer', color = '#7b4eb2', isSelected = false, onClick, modelUrl = null, showTorch = false
-}) => {
+const Token = ({ character, isSelected, onClick, onMove }) => {
+  const [targetPos, setTargetPos] = useState(new THREE.Vector3(...character.position));
   const meshRef = useRef();
-  useFrame((state, delta) => { if (meshRef.current) { meshRef.current.position.lerp(new THREE.Vector3(...position), 0.15); } });
+
+  useFrame((state, delta) => {
+    if (meshRef.current) {
+      const currentPos = meshRef.current.position;
+      const destPos = new THREE.Vector3(...character.position);
+      currentPos.lerp(destPos, 0.1);
+    }
+  });
 
   return (
-    <Float speed={isSelected ? 3 : 1.5} rotationIntensity={0.5} floatIntensity={0.5}>
-      <group ref={meshRef} onClick={(e) => { e.stopPropagation(); onClick(); }}>
-        {(isSelected || showTorch) && <pointLight position={[0, 1.5, 0]} intensity={40} distance={5} color="#ffae00" castShadow shadow-mapSize={[512, 512]} />}
-        <mesh position={[0, 0.5, 0]}> <cylinderGeometry args={[0.4, 0.4, 0.2, 32]} /> <meshStandardMaterial color={isSelected ? '#fff' : color} metalness={0.8} roughness={0.2} /> </mesh>
-        {isSelected && ( <mesh position={[0, 0.4, 0]} rotation={[-Math.PI / 2, 0, 0]}> <ringGeometry args={[0.5, 0.6, 32]} /> <meshStandardMaterial color="#c5a059" emissive="#c5a059" emissiveIntensity={5} transparent opacity={0.8} /> </mesh> )}
-        <Suspense fallback={<mesh position={[0, 1.2, 0]}><capsuleGeometry args={[0.3, 1, 4, 16]} /><meshStandardMaterial color={color} /></mesh>}>
-           {modelUrl ? <ModelLoader url={modelUrl} color={color} isSelected={isSelected} /> : <mesh position={[0, 1.2, 0]}><capsuleGeometry args={[0.3, 1, 4, 16]} /><meshStandardMaterial color={color} /></mesh>}
-        </Suspense>
-        <Html position={[0, 2.8, 0]} center> <div className="entity-label" style={{ background: 'rgba(0,0,0,0.85)', padding: '4px 12px', borderRadius: '50px', border: `1.5px solid ${isSelected ? '#c5a059' : color}`, color: 'white', fontSize: '11px', fontWeight: 'bold', pointerEvents: 'none' }}> {name.toUpperCase()} </div> </Html>
-      </group>
-    </Float>
+    <group position={character.position} onClick={(e) => { e.stopPropagation(); onClick(); }}>
+      <mesh ref={meshRef}>
+        <cylinderGeometry args={[0.5, 0.5, 0.1, 32]} />
+        <meshStandardMaterial color={isSelected ? 'var(--accent-gold)' : character.color} metalness={0.8} roughness={0.2} />
+        {isSelected && <pointLight position={[0, 0.5, 0]} intensity={1.5} color="var(--accent-gold)" distance={3} />}
+      </mesh>
+      
+      {character.modelUrl ? (
+        <ModelLoader url={character.modelUrl} />
+      ) : (
+        <Float speed={2} rotationIntensity={0.5} floatIntensity={0.5}>
+          <mesh position={[0, 0.6, 0]}>
+            <sphereGeometry args={[0.4, 32, 32]} />
+            <meshStandardMaterial color={character.color} emissive={character.color} emissiveIntensity={0.5} />
+          </mesh>
+        </Float>
+      )}
+
+      <Text position={[0, 1.5, 0]} fontSize={0.2} color="white" anchorX="center" anchorY="middle">
+        {character.name}
+      </Text>
+    </group>
+  );
+};
+
+const SpellVFX = ({ id, position, color, onComplete }) => {
+  const [opacity, setOpacity] = useState(1);
+  useFrame((state, delta) => {
+    setOpacity(prev => Math.max(0, prev - delta * 0.8));
+    if (opacity <= 0) onComplete(id);
+  });
+
+  return (
+    <group position={position}>
+      <Sparkles count={50} scale={2} size={3} speed={0.4} color={color} opacity={opacity} />
+      <pointLight intensity={opacity * 2} color={color} distance={4} />
+    </group>
+  );
+};
+
+const AoETargeter = ({ onCast }) => {
+  const { viewport, mouse, raycaster, scene } = useThree();
+  const targetRef = useRef();
+
+  useFrame(() => {
+    if (targetRef.current) {
+       raycaster.setFromCamera(mouse, scene.children.find(c => c.isPerspectiveCamera));
+       const intersects = raycaster.intersectObjects(scene.children, true);
+       const floor = intersects.find(i => i.object.name === 'floor');
+       if (floor) {
+         targetRef.current.position.set(floor.point.x, 0.1, floor.point.z);
+       }
+    }
+  });
+
+  return (
+    <group ref={targetRef} onClick={(e) => { e.stopPropagation(); onCast(targetRef.current.position.clone()); }}>
+      <Torus args={[2, 0.05, 16, 100]} rotation={[Math.PI/2, 0, 0]}>
+        <meshBasicMaterial color="#ff4b4b" transparent opacity={0.5} />
+      </Torus>
+      <Circle args={[2]} rotation={[-Math.PI/2, 0, 0]} position={[0, -0.01, 0]}>
+        <meshBasicMaterial color="#ff4b4b" transparent opacity={0.1} />
+      </Circle>
+    </group>
+  );
+};
+
+const Room = ({ type, showFog, showTorches }) => {
+  const isDungeon = type === 'dungeon';
+  return (
+    <group>
+      <mesh receiveShadow rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.05, 0]} name="floor">
+        <planeGeometry args={[20, 20]} />
+        <meshStandardMaterial color={isDungeon ? '#151515' : '#2a1a10'} roughness={0.8} />
+      </mesh>
+      <gridHelper args={[20, 20, '#444', '#222']} position={[0, 0.01, 0]} />
+      {showFog && <fog attach="fog" args={['#000', 5, 15]} />}
+      <Stars radius={100} depth={50} count={5000} factor={4} saturation={0} fade speed={1} />
+    </group>
   );
 };
 
 const Scene = ({ 
-  characters = [], roomType = 'dungeon', onSelectCharacter, onMoveCharacter,
-  selectedId, activeDice = [], onDiceResult, showFog, vfxs = [], onCompleteVFX,
-  showTorches = false
+  characters, roomType, onSelectCharacter, onMoveCharacter, selectedId, 
+  activeDice, onDiceResult, showFog, showTorches, vfxs, onCompleteVFX,
+  activeSpell, onCastSpell 
 }) => {
-  const handleGridClick = useCallback((point) => {
-    if (selectedId !== null) {
-      const snappedPosition = [Math.round(point.x), 0, Math.round(point.z)];
-      onMoveCharacter(selectedId, snappedPosition);
+  const [clickState, setClickState] = useState(null);
+
+  const handlePointerDown = (e) => {
+    if (activeSpell) return;
+    if (e.button === 0) setClickState({ x: e.clientX, y: e.clientY });
+  };
+
+  const handlePointerUp = (e) => {
+    if (activeSpell) return;
+    if (!clickState) return;
+    const dist = Math.sqrt(Math.pow(e.clientX - clickState.x, 2) + Math.pow(e.clientY - clickState.y, 2));
+    if (dist < 5 && selectedId !== null && e.intersections[0]?.object.name === 'floor') {
+      const point = e.intersections[0].point;
+      onMoveCharacter(selectedId, [point.x, 0, point.z]);
     }
-  }, [selectedId, onMoveCharacter]);
+    setClickState(null);
+  };
 
   return (
-    <div className="canvas-container">
-      <Canvas shadows camera={{ position: [12, 12, 12], fov: 40 }} onPointerMissed={() => onSelectCharacter(null)}>
-        <color attach="background" args={['#08040a']} />
-        <fog attach="fog" args={['#08040a', 15, 45]} />
-        <ambientLight intensity={0.15} />
-        <pointLight position={[8, 12, 8]} intensity={120} castShadow shadow-mapSize={[1024, 1024]} color="#c5a059" />
-        <pointLight position={[-8, 8, -8]} color="#7b4eb2" intensity={100} castShadow />
-        <Suspense fallback={null}>
-          <Physics gravity={[0, -9.81, 0]}>
-            <PhysicsFloor onGridClick={handleGridClick} showFog={showFog} />
-            <ProceduralRoom type={roomType} />
-            {characters.map((char, index) => (
-              <CharacterToken key={char.id ?? index} position={char.position || [index * 2, 0, 0]} name={char.name} color={char.color || '#7b4eb2'} isSelected={selectedId === (char.id ?? index)} onClick={() => onSelectCharacter(char.id ?? index)} modelUrl={char.modelUrl} showTorch={showTorches} />
-            ))}
-            {activeDice.map((dice) => ( <PhysicsDice key={dice.id} sides={dice.sides} position={dice.position} onResult={(res) => onDiceResult(dice.id, res)} /> ))}
-            <SpellVFX vfxs={vfxs} onCompleteVFX={onCompleteVFX} />
-          </Physics>
-          <Environment preset="night" />
-          <ContactShadows resolution={1024} scale={20} blur={2} opacity={0.4} far={10} color="#000" />
-          <EffectComposer> <Bloom luminanceThreshold={1.2} intensity={2} /> </EffectComposer>
-        </Suspense>
-        <OrbitControls makeDefault minPolarAngle={0} maxPolarAngle={Math.PI / 2.1} />
+    <div className="scene-container">
+      <Canvas shadows onPointerDown={handlePointerDown} onPointerUp={handlePointerUp}>
+        <PerspectiveCamera makeDefault position={[8, 10, 8]} fov={40} />
+        <OrbitControls makeDefault enableDamping dampingFactor={0.05} maxPolarAngle={Math.PI / 2.2} minDistance={5} maxDistance={20} />
+        
+        <ambientLight intensity={showTorches ? 0.2 : 0.5} />
+        <spotLight position={[10, 10, 10]} angle={0.15} penumbra={1} intensity={1} castShadow />
+        
+        <Physics gravity={[0, -9.81, 0]}>
+           <Room type={roomType} showFog={showFog} showTorches={showTorches} />
+           {characters.map((char, i) => (
+             <Token key={char.id ?? i} character={char} isSelected={(char.id ?? i) === selectedId} onClick={() => onSelectCharacter(char.id ?? i)} onMove={(pos) => onMoveCharacter(char.id ?? i, pos)} />
+           ))}
+           {activeDice.map(d => (
+             <PhysicsDice key={d.id} sides={d.sides} position={d.position} onResult={(res) => onDiceResult(d.id, res)} />
+           ))}
+        </Physics>
+
+        {vfxs.map(v => ( <SpellVFX key={v.id} {...v} onComplete={onCompleteVFX} /> ))}
+        
+        {activeSpell === 'fireball' && (
+           <AoETargeter onCast={(pos) => onCastSpell(pos, '#ff4b4b')} />
+        )}
+
+        <Environment preset="night" />
       </Canvas>
     </div>
   );
