@@ -5,6 +5,7 @@ import UIOverlay from './components/UIOverlay';
 import LandingPage from './pages/LandingPage';
 import CharacterCreator from './pages/CharacterCreator';
 import { dungeonService, supabase } from './lib/supabase';
+import { characterImporter } from './lib/importer';
 import './App.css';
 
 function VTTSession() {
@@ -14,6 +15,8 @@ function VTTSession() {
   const [activeDice, setActiveDice] = useState([]);
   const [diceHistory, setDiceHistory] = useState([]);
   const [chatHistory, setChatHistory] = useState([]);
+  const [initiative, setInitiative] = useState([]);
+  const [activeTrack, setActiveTrack] = useState(null);
   const [showFog, setShowFog] = useState(false);
   const [showTorches, setShowTorches] = useState(false);
   const [vfxs, setVfxs] = useState([]);
@@ -21,16 +24,8 @@ function VTTSession() {
 
   const [characters, setCharacters] = useState([
     { 
-      id: 0, 
-      name: 'Turok the Brave', 
-      color: '#ff4b4b', 
-      level: 5, 
-      class: 'Barbarian', 
-      position: [0, 0, 0],
-      hp: '54/54',
-      stats: { str: 18, dex: 14, con: 16, int: 8, wis: 10, cha: 12 },
-      soundUrl: null,
-      modelUrl: null
+      id: 0, name: 'Turok the Brave', color: '#ff4b4b', level: 5, class: 'Barbarian', 
+      position: [0, 0, 0], hp: '54/54', stats: { str: 18, dex: 14, con: 16, int: 8, wis: 10, cha: 12 }
     }
   ]);
 
@@ -46,12 +41,10 @@ function VTTSession() {
         setActiveDice(prev => [...prev, { id: payload.diceId, sides: payload.sides, position: payload.position }]);
         setDiceHistory(prev => [{ id: payload.diceId, entity: payload.entity, label: payload.label, sides: payload.sides, result: null, time: new Date().toLocaleTimeString() }, ...prev.slice(0, 10)]);
       })
-      .on('broadcast', { event: 'vfx-spell' }, ({ payload }) => {
-        setVfxs(prev => [...prev, payload]);
-      })
-      .on('broadcast', { event: 'chat-msg' }, ({ payload }) => {
-        setChatHistory(prev => [...prev, payload].slice(-15));
-      })
+      .on('broadcast', { event: 'chat-msg' }, ({ payload }) => { setChatHistory(prev => [...prev, payload].slice(-15)); })
+      .on('broadcast', { event: 'initiative-sync' }, ({ payload }) => { setInitiative(payload.initiative); })
+      .on('broadcast', { event: 'track-sync' }, ({ payload }) => { setActiveTrack(payload.track); })
+      .on('broadcast', { event: 'vfx-spell' }, ({ payload }) => { setVfxs(prev => [...prev, payload]); })
       .on('broadcast', { event: 'toggle-fog' }, ({ payload }) => { setShowFog(payload.showFog); })
       .on('broadcast', { event: 'toggle-torch' }, ({ payload }) => { setShowTorches(payload.showTorches); })
       .subscribe();
@@ -59,69 +52,82 @@ function VTTSession() {
     return () => { supabase.removeChannel(channelRef.current); };
   }, [params]);
 
-  const handleSendMessage = (text) => {
-    const chat = { id: Date.now(), sender: 'DM', text, time: new Date().toLocaleTimeString() };
-    setChatHistory(prev => [...prev, chat].slice(-15));
-    channelRef.current?.send({ type: 'broadcast', event: 'chat-msg', payload: chat });
+  const handleImport = async (url) => {
+    try {
+      const c = await characterImporter.importFromDDB(url);
+      const id = characters.length;
+      setCharacters(prev => [...prev, { ...c, id, color: '#c5a059', position: [Math.random()*4-2, 0, Math.random()*4-2] }]);
+      setSelectedId(id);
+    } catch (e) {
+      alert(`Import Failed: ${e.message}`);
+    }
   };
 
-  const handleMoveCharacter = (charId, newPosition) => {
-    setCharacters(prev => prev.map(c => (c.id === charId) ? { ...c, position: newPosition } : c));
-    channelRef.current?.send({ type: 'broadcast', event: 'token-move', payload: { charId, newPosition } });
+  const handleUpdateInitiative = (newInit) => {
+    setInitiative(newInit);
+    channelRef.current?.send({ type: 'broadcast', event: 'initiative-sync', payload: { initiative: newInit } });
   };
 
-  const handleCastSpell = (color) => {
-    if (selectedId === null) return;
-    const char = characters.find(c => (c.id ?? 0) === selectedId);
-    if (!char) return;
-    const vfx = { id: Date.now(), position: [char.position[0], 1.2, char.position[2]], color };
-    setVfxs(prev => [...prev, vfx]);
-    channelRef.current?.send({ type: 'broadcast', event: 'vfx-spell', payload: vfx });
-    handleRollPhysics(20, 'ARCANE SPELL');
+  const handleTrackChange = (track) => {
+    setActiveTrack(track);
+    channelRef.current?.send({ type: 'broadcast', event: 'track-sync', payload: { track } });
   };
 
-  const handleRollPhysics = (sides, label) => {
-    const diceId = Date.now();
-    const entity = selectedId !== null ? (characters.find(c => (c.id ?? 0) === selectedId)?.name || 'Adventurer') : 'Adventurer';
-    const position = [Math.random()*2-1, 6, Math.random()*2-1];
-    setActiveDice(prev => [...prev, { id: diceId, sides, position }]);
-    setDiceHistory(prev => [{ id: diceId, entity, label, sides, result: null, time: new Date().toLocaleTimeString() }, ...prev.slice(0, 10)]);
-    channelRef.current?.send({ type: 'broadcast', event: 'dice-roll', payload: { diceId, sides, position, entity, label } });
-  };
-
-  const handleToggleFog = () => {
-    const newState = !showFog;
-    setShowFog(newState);
-    channelRef.current?.send({ type: 'broadcast', event: 'toggle-fog', payload: { showFog: newState } });
-  };
-
-  const handleToggleTorches = () => {
-    const newState = !showTorches;
-    setShowTorches(newState);
-    channelRef.current?.send({ type: 'broadcast', event: 'toggle-torch', payload: { showTorches: newState } });
-  };
+  useEffect(() => {
+    if (activeTrack) {
+       // In a full app, you would play audio here and handle user interaction for autoplay
+       console.log('Synchronized Atmosphere Track:', activeTrack.name);
+    }
+  }, [activeTrack]);
 
   return (
     <>
       <Scene 
         characters={characters} roomType={roomType} 
-        onSelectCharacter={setSelectedId} onMoveCharacter={handleMoveCharacter}
+        onSelectCharacter={setSelectedId} onMoveCharacter={(id, pos) => {
+          setCharacters(prev => prev.map(c => (c.id === id) ? { ...c, position: pos } : c));
+          channelRef.current?.send({ type: 'broadcast', event: 'token-move', payload: { charId: id, newPosition: pos } });
+        }}
         selectedId={selectedId} activeDice={activeDice} onDiceResult={(id, res) => setDiceHistory(prev => prev.map(r => r.id === id ? { ...r, result: res } : r))}
         showFog={showFog} showTorches={showTorches} vfxs={vfxs} onCompleteVFX={(id) => setVfxs(prev => prev.filter(v => v.id !== id))}
       />
       <UIOverlay 
-        onImportSuccess={(c) => { 
-          const id = characters.length;
-          setCharacters(prev => [...prev, { ...c, id, color: '#c5a059', position: [Math.random()*4-2, 0, Math.random()*4-2] }]);
-          setSelectedId(id);
+        onImportSuccess={handleImport} onRoomChange={setRoomType} onSpawnProp={(p) => setCharacters(prev => [...prev, { ...p, id: characters.length, type: 'prop' }])}
+        onRollPhysics={(sides, label) => {
+          const diceId = Date.now();
+          const entity = selectedId !== null ? (characters.find(c => (c.id ?? 0) === selectedId)?.name || 'Adventurer') : 'Adventurer';
+          const position = [Math.random()*2-1, 6, Math.random()*2-1];
+          setActiveDice(prev => [...prev, { id: diceId, sides, position }]);
+          setDiceHistory(prev => [{ id: diceId, entity, label, sides, result: null, time: new Date().toLocaleTimeString() }, ...prev.slice(0, 10)]);
+          channelRef.current?.send({ type: 'broadcast', event: 'dice-roll', payload: { diceId, sides, position, entity, label } });
         }} 
-        onRoomChange={setRoomType} onSpawnProp={(p) => setCharacters(prev => [...prev, { ...p, id: characters.length, type: 'prop' }])}
-        onRollPhysics={handleRollPhysics} onClearDice={() => setActiveDice([])} onToggleFog={handleToggleFog} onToggleTorches={handleToggleTorches} onSendMessage={handleSendMessage}
+        onClearDice={() => setActiveDice([])} onToggleFog={() => {
+           const newState = !showFog; setShowFog(newState);
+           channelRef.current?.send({ type: 'broadcast', event: 'toggle-fog', payload: { showFog: newState } });
+        }} 
+        onToggleTorches={() => {
+           const newState = !showTorches; setShowTorches(newState);
+           channelRef.current?.send({ type: 'broadcast', event: 'toggle-torch', payload: { showTorches: newState } });
+        }}
+        onSendMessage={(text) => {
+           const chat = { id: Date.now(), sender: 'DM', text, time: new Date().toLocaleTimeString() };
+           setChatHistory(prev => [...prev, chat].slice(-15));
+           channelRef.current?.send({ type: 'broadcast', event: 'chat-msg', payload: chat });
+        }}
+        onInitiativeUpdate={handleUpdateInitiative} onTrackChange={handleTrackChange}
         showFog={showFog} showTorches={showTorches} chatHistory={chatHistory}
         onSaveSound={(id, url) => setCharacters(prev => prev.map(c => (c.id ?? 0) === id ? { ...c, soundUrl: url } : c))}
-        onSaveDungeon={async (name) => await dungeonService.saveDungeon(name, { characters, roomType })} 
-        onLoadDungeon={async (id) => { const data = await dungeonService.loadDungeon(id); if (data?.config) { setCharacters(data.config.characters); setRoomType(data.config.roomType); } }} 
-        onCastSpell={handleCastSpell} roomType={roomType} characters={characters} selectedId={selectedId} diceHistory={diceHistory}
+        onSaveDungeon={async (name) => await dungeonService.saveDungeon(name, { characters, roomType, initiative })} 
+        onLoadDungeon={async (id) => { const data = await dungeonService.loadDungeon(id); if (data?.config) { setCharacters(data.config.characters); setRoomType(data.config.roomType); setInitiative(data.config.initiative || []); } }} 
+        onCastSpell={(color) => {
+           if (selectedId === null) return;
+           const char = characters.find(c => (c.id ?? 0) === selectedId);
+           if (!char) return;
+           const vfx = { id: Date.now(), position: [char.position[0], 1.2, char.position[2]], color };
+           setVfxs(prev => [...prev, vfx]);
+           channelRef.current?.send({ type: 'broadcast', event: 'vfx-spell', payload: vfx });
+        }}
+        roomType={roomType} characters={characters} selectedId={selectedId} diceHistory={diceHistory} initiative={initiative} activeTrack={activeTrack}
       />
     </>
   );

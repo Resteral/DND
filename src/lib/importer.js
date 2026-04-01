@@ -3,32 +3,50 @@ import axios from 'axios';
 export const characterImporter = {
   async importFromDDB(url) {
     try {
-      console.log('Initiating Arcane Import from D&D Beyond:', url);
+      console.log('Initiating Arcane Summoning:', url);
       
-      // Extract Character ID from URL (e.g., https://www.dndbeyond.com/characters/12345678)
       const match = url.match(/characters\/(\d+)/);
-      if (!match) throw new Error('Invalid D&D Beyond character URL. Please use the full address (e.g. /characters/12345)');
+      if (!match) throw new Error('Invalid URL format. Use the full D&D Beyond Character URL.');
       
       const charId = match[1];
-      const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(`https://character-service.dndbeyond.com/character/v2/character/${charId}`)}`;
+      
+      // Try primary proxy (corsproxy.io is often faster and cleaner)
+      const targetUrl = `https://character-service.dndbeyond.com/character/v2/character/${charId}`;
+      const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
 
-      const response = await axios.get(proxyUrl);
-      const data = JSON.parse(response.data.contents);
+      let response;
+      try {
+        response = await axios.get(proxyUrl);
+      } catch (e) {
+        // Fallback to AllOrigins if first proxy fails
+        const fallbackProxy = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
+        const fallbackRes = await axios.get(fallbackProxy);
+        response = { data: JSON.parse(fallbackRes.data.contents) };
+      }
 
-      if (!data.success) throw new Error('Failed to summon character data from the weave.');
+      const data = response.data;
+
+      if (!data.success) {
+        if (data.message === 'Character is private') {
+          throw new Error('This character is set to PRIVATE. Please set it to PUBLIC in Character Settings on D&D Beyond.');
+        }
+        throw new Error(`The weave rejects this summon: ${data.message || 'Unknown Arcane Interference'}`);
+      }
 
       const char = data.data;
-      
-      // Map D&D Beyond JSON to Arcane VTT structure
-      // Ability score mapping: STR(1), DEX(2), CON(3), INT(4), WIS(5), CHA(6)
-      const getStat = (id) => char.stats.find(s => s.id === id)?.value || 10;
+      const getStat = (id) => {
+          const base = char.stats.find(s => s.id === id)?.value || 10;
+          const bonus = char.bonusStats.find(s => s.id === id)?.value || 0;
+          const override = char.overrideStats.find(s => s.id === id)?.value || 0;
+          return override || (base + bonus);
+      };
       
       return {
         id: char.id,
         name: char.name,
-        class: char.classes[0]?.definition?.name || 'Adventurer',
+        class: char.classes[0]?.definition?.name || 'Hero',
         level: char.classes.reduce((sum, c) => sum + c.level, 0),
-        hp: `${char.baseHitPoints}/${char.baseHitPoints}`, // Simplified HP
+        hp: `${char.baseHitPoints}/${char.baseHitPoints}`,
         stats: {
           str: getStat(1),
           dex: getStat(2),
@@ -38,10 +56,14 @@ export const characterImporter = {
           cha: getStat(6)
         },
         image: char.decorations?.avatarUrl || null,
-        modelUrl: null // Ready for AI Forge integration
+        modelUrl: null
       };
     } catch (error) {
-      console.error('Portal Import Error:', error.message);
+      console.error('Import Error:', error.message);
+      // More helpful error for the user
+      if (error.message.includes('403') || error.message.includes('401')) {
+         throw new Error('ACCESS DENIED: Ensure your D&D Beyond character is set to PUBLIC.');
+      }
       throw error;
     }
   }
