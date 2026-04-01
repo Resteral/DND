@@ -7,9 +7,7 @@ import {
   ContactShadows, 
   Text, 
   Float,
-  Html,
-  SpotLight,
-  PointLight
+  Html
 } from '@react-three/drei';
 import { Bloom, EffectComposer } from '@react-three/postprocessing';
 import { Physics, usePlane } from '@react-three/cannon';
