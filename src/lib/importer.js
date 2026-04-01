@@ -4,49 +4,72 @@ export const characterImporter = {
   async importFromDDB(url) {
     try {
       console.log('Initiating Arcane Summoning:', url);
-      
       const match = url.match(/characters\/(\d+)/);
-      if (!match) throw new Error('Invalid URL format. Use the full D&D Beyond Character URL.');
+      if (!match) throw new Error('Invalid URL. Format should be: characters/1234567');
       
       const charId = match[1];
-      
-      // Try primary proxy (corsproxy.io is often faster and cleaner)
       const targetUrl = `https://character-service.dndbeyond.com/character/v2/character/${charId}`;
-      const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+      
+      // Try multiple proxies in sequence with aggressive timeout
+      const proxies = [
+        `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`,
+        `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`,
+        `https://thingproxy.freeboard.io/fetch/${targetUrl}`
+      ];
 
-      let response;
-      try {
-        response = await axios.get(proxyUrl);
-      } catch (e) {
-        // Fallback to AllOrigins if first proxy fails
-        const fallbackProxy = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
-        const fallbackRes = await axios.get(fallbackProxy);
-        response = { data: JSON.parse(fallbackRes.data.contents) };
-      }
+      let rawData = null;
+      let lastError = null;
 
-      const data = response.data;
-
-      if (!data.success) {
-        if (data.message === 'Character is private') {
-          throw new Error('This character is set to PRIVATE. Please set it to PUBLIC in Character Settings on D&D Beyond.');
+      for (const proxy of proxies) {
+        try {
+          console.log('Attempting Portal Path:', proxy);
+          const res = await axios.get(proxy, { timeout: 8000 });
+          
+          // AllOrigins wraps the result in a .contents string
+          let contents = res.data;
+          if (proxy.includes('allorigins')) {
+            contents = JSON.parse(res.data.contents);
+          }
+          
+          if (contents && (contents.success !== undefined || contents.data)) {
+            rawData = contents;
+            break; 
+          }
+        } catch (e) {
+          console.warn('Portal Path Blocked:', proxy, e.message);
+          lastError = e;
         }
-        throw new Error(`The weave rejects this summon: ${data.message || 'Unknown Arcane Interference'}`);
       }
 
-      const char = data.data;
+      if (!rawData) {
+        throw new Error(`The Weave is thinning. Proxies blocked or character ${charId} not found. (${lastError?.message || 'N/A'})`);
+      }
+
+      if (rawData.success === false) {
+        const msg = rawData.message || 'Unknown Arcane Interference';
+        if (msg.toLowerCase().includes('private')) {
+           throw new Error('CHARACTER IS PRIVATE. Set to PUBLIC in D&D Beyond Character Settings.');
+        }
+        throw new Error(`The Weave rejects this summon: ${msg}`);
+      }
+
+      const char = rawData.data;
+      if (!char) throw new Error('Incomplete data received from the weave.');
+
+      // Recursive stat extractor
       const getStat = (id) => {
-          const base = char.stats.find(s => s.id === id)?.value || 10;
-          const bonus = char.bonusStats.find(s => s.id === id)?.value || 0;
-          const override = char.overrideStats.find(s => s.id === id)?.value || 0;
+          const base = char.stats?.find(s => s.id === id)?.value || 10;
+          const bonus = char.bonusStats?.find(s => s.id === id)?.value || 0;
+          const override = char.overrideStats?.find(s => s.id === id)?.value || 0;
           return override || (base + bonus);
       };
       
       return {
         id: char.id,
-        name: char.name,
-        class: char.classes[0]?.definition?.name || 'Hero',
-        level: char.classes.reduce((sum, c) => sum + c.level, 0),
-        hp: `${char.baseHitPoints}/${char.baseHitPoints}`,
+        name: char.name || 'Unknown Hero',
+        class: char.classes?.[0]?.definition?.name || 'Classless',
+        level: char.classes?.reduce((sum, c) => sum + (c.level || 0), 0) || 1,
+        hp: `${char.baseHitPoints || 10}/${char.baseHitPoints || 10}`,
         stats: {
           str: getStat(1),
           dex: getStat(2),
@@ -59,11 +82,7 @@ export const characterImporter = {
         modelUrl: null
       };
     } catch (error) {
-      console.error('Import Error:', error.message);
-      // More helpful error for the user
-      if (error.message.includes('403') || error.message.includes('401')) {
-         throw new Error('ACCESS DENIED: Ensure your D&D Beyond character is set to PUBLIC.');
-      }
+      console.error('Final Portal Error:', error.message);
       throw error;
     }
   }

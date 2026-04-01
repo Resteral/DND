@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Dices, UserPlus, Shield, Sword, MessageSquare, Settings, LayoutDashboard, Box, MapPin, 
   ChevronRight, Import, Sparkles, Wand2, Trash2, Zap, Loader2, Save, Library, Volume2, 
-  Mic, Play, Eye, EyeOff, Flame, Wind, FlameKindling, Send, Music
+  Mic, Play, Eye, EyeOff, Flame, Wind, FlameKindling, Send, Music, AlertCircle, CheckCircle2
 } from 'lucide-react';
 import { characterImporter } from '../lib/importer';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -19,26 +19,32 @@ const UIOverlay = ({
   initiative, activeTrack 
 }) => {
   const [importUrl, setImportUrl] = useState('');
+  const [importStatus, setImportStatus] = useState({ type: null, msg: '' });
   const [isImporting, setIsImporting] = useState(false);
   const [showGenPanel, setShowGenPanel] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
   const [message, setMessage] = useState('');
   const [dungeonName, setDungeonName] = useState('');
-  const [savedDungeons, setSavedDungeons] = useState([]);
 
   const selectedChar = characters.find((c, i) => (c.id ?? i) === selectedId);
 
-  const handleSend = (e) => {
-    e.preventDefault(); if (!message) return;
-    onSendMessage(message); setMessage('');
-  };
-
-  const handleApplyInitiative = () => {
-    if (selectedId === null) return;
-    const char = characters.find(c => (c.id ?? 0) === selectedId);
-    const val = Math.floor(Math.random() * 20) + 1;
-    onInitiativeUpdate([{ name: char.name, val }, ...initiative].sort((a,b) => b.val - a.val));
-    onSendMessage(`Rolled initiative: ${val} for ${char.name}`);
+  const handleImport = async (e) => {
+    e.preventDefault();
+    if (!importUrl) return;
+    setIsImporting(true);
+    setImportStatus({ type: 'loading', msg: 'Summoning from the weave...' });
+    
+    try {
+      // Direct call to verification logic
+      await onImportSuccess(importUrl);
+      setImportStatus({ type: 'success', msg: 'Character successfully summoned!' });
+      setImportUrl('');
+      setTimeout(() => setImportStatus({ type: null, msg: '' }), 3000);
+    } catch (err) {
+      setImportStatus({ type: 'error', msg: err.message });
+    } finally {
+      setIsImporting(false);
+    }
   };
 
   return (
@@ -59,15 +65,27 @@ const UIOverlay = ({
         </div>
       </motion.div>
 
-      {/* Library/Save Overlay */}
-      <AnimatePresence> {showLibrary && ( <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} className="panel" style={{ position: 'fixed', top: '15%', left: '50%', transform: 'translateX(-50%)', width: '600px', zIndex: 2000, padding: '2.5rem', background: 'rgba(5, 5, 10, 0.99)', border: '2px solid var(--accent-gold)', pointerEvents: 'auto' }}> <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.5rem' }}> <h2 style={{ color: 'var(--accent-gold)' }}>DUNGEON ARCHIVE</h2> <button onClick={() => setShowLibrary(false)} style={{ background: 'none', border: 'none', color: 'white', fontSize: '24px', cursor: 'pointer' }}>×</button> </div> <div style={{ marginBottom: '2rem', background: 'rgba(255,255,255,0.05)', padding: '1rem', borderRadius: '8px' }}> <h3 style={{ fontSize: '0.9rem', marginBottom: '0.75rem' }}>SAVE CURRENT REALM</h3> <div style={{ display: 'flex', gap: '1rem' }}> <input className="input-field" placeholder="Realm name..." value={dungeonName} onChange={(e) => setDungeonName(e.target.value)} /> <button className="btn" style={{ background: 'var(--accent-gold)', color: 'black' }} onClick={handleApplyInitiative}> <Save size={16} /> SAVE </button> </div> </div> </motion.div> )} </AnimatePresence>
-
-      <AnimatePresence> {showGenPanel && ( <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} className="panel" style={{ position: 'fixed', top: '100px', left: '50%', transform: 'translateX(-50%)', width: '500px', zIndex: 1000, padding: '2.5rem', background: 'rgba(8, 5, 10, 0.98)', border: '2px solid var(--accent-purple)', pointerEvents: 'auto' }}> <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2rem' }}> <h2 style={{ color: 'var(--accent-gold)', fontSize: '1.5rem', fontWeight: 'bold' }}>GENESIS LAB</h2> <button onClick={() => setShowGenPanel(false)} style={{ background: 'none', border: 'none', color: 'white', fontSize: '24px', cursor: 'pointer' }}>×</button> </div> <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1.5rem' }}> <div className="die-btn" style={{ padding: '2rem' }} onClick={() => onRoomChange('dungeon')}> <Box size={40} color="var(--accent-purple)" /> <b style={{ marginTop: '1rem' }}>CATACOMBS</b> </div> <div className="die-btn" style={{ padding: '2rem' }} onClick={() => onRoomChange('tavern')}> <Shield size={40} color="var(--accent-gold)" /> <b style={{ marginTop: '1rem' }}>TAVERN</b> </div> </div> </motion.div> )} </AnimatePresence>
-
       {/* Left Interface: Party & Combat Orders */}
       <motion.div initial={{ x: -100, opacity: 0 }} animate={{ x: 0, opacity: 1 }} className="left-panel panel">
         <h3 style={{ fontSize: '0.9rem' }}><UserPlus size={16} /> REALM PARTY</h3>
-        <form onSubmit={(e) => { e.preventDefault(); if (importUrl) onImportSuccess(importUrl); setImportUrl(''); }} style={{ display: 'flex', gap: '0.5rem', margin: '0.75rem 0' }}> <input className="input-field" style={{ padding: '0.6rem', fontSize: '0.75rem' }} placeholder="D&D Beyond URL..." value={importUrl} onChange={(e) => setImportUrl(e.target.value)} /> <button type="submit" className="btn" style={{ padding: '0.5rem' }}>SUMMON</button> </form>
+        
+        <form onSubmit={handleImport} style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', margin: '0.75rem 0' }}>
+           <div style={{ display: 'flex', gap: '0.5rem' }}>
+             <input className="input-field" style={{ padding: '0.6rem', fontSize: '0.75rem' }} placeholder="D&D Beyond URL..." value={importUrl} onChange={(e) => setImportUrl(e.target.value)} />
+             <button type="submit" className="btn" style={{ padding: '0.5rem' }} disabled={isImporting}>
+                {isImporting ? <Loader2 className="animate-spin" size={16} /> : 'SUMMON'}
+             </button>
+           </div>
+           
+           <AnimatePresence>
+             {importStatus.type && (
+               <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} style={{ fontSize: '10px', display: 'flex', alignItems: 'center', gap: '6px', color: importStatus.type === 'error' ? '#ff4b4b' : (importStatus.type === 'success' ? '#4bff4b' : 'var(--accent-gold)') }}>
+                  {importStatus.type === 'error' ? <AlertCircle size={12} /> : (importStatus.type === 'success' ? <CheckCircle2 size={12} /> : <Loader2 size={12} className="animate-spin" />)}
+                  {importStatus.msg}
+               </motion.div>
+             )}
+           </AnimatePresence>
+        </form>
         
         <InitiativeTracker initiative={initiative} onUpdate={onInitiativeUpdate} />
         <AmbientAudio activeTrack={activeTrack} onTrackChange={onTrackChange} />
@@ -90,7 +108,7 @@ const UIOverlay = ({
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginTop: '1rem' }}>
                <button className="btn" style={{ background: '#4b1818', border: '1px solid #ff4b4b' }} onClick={() => onCastSpell('#ff4b4b')}>ATTACK</button>
-               <button className="btn btn-outline" style={{ border: '1.5px solid var(--accent-gold)' }} onClick={handleApplyInitiative}>JOIN INITIATIVE</button>
+               <button className="btn btn-outline" style={{ border: '1.5px solid var(--accent-gold)' }} onClick={() => onInitiativeUpdate([{ name: selectedChar.name, val: Math.floor(Math.random()*20)+1 }, ...initiative].sort((a,b)=>b.val-a.val))}>INITIATIVE</button>
             </div>
           </motion.div>
         )}
@@ -106,23 +124,16 @@ const UIOverlay = ({
 
         <div style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1rem' }}>
           <div style={{ height: '180px', background: 'rgba(0,0,0,0.4)', borderRadius: '12px', padding: '1rem', fontSize: '0.8rem', overflowY: 'auto', border: '1px solid rgba(255,255,255,0.05)' }}>
-             {diceHistory.map((roll, i) => (
-                <div key={i} style={{ marginBottom: '0.5rem' }}>
-                   <b style={{ color: 'var(--accent-purple)' }}>{roll.entity}</b> {roll.label}: <b style={{ color: 'var(--accent-gold)' }}>{roll.result || 'ROLLING...'}</b>
-                </div>
-             ))}
+             {diceHistory.map((roll, i) => ( <div key={i} style={{ marginBottom: '0.5rem' }}> <b style={{ color: 'var(--accent-purple)' }}>{roll.entity}</b> {roll.label}: <b style={{ color: 'var(--accent-gold)' }}>{roll.result || 'ROLLING...'}</b> </div> ))}
           </div>
-
           <div style={{ height: '300px', background: 'rgba(8, 5, 10, 0.6)', borderRadius: '12px', padding: '1rem', fontSize: '0.8rem', overflowY: 'auto', border: '1.5px solid rgba(123, 78, 178, 0.1)' }}>
              {chatHistory.map((chat, i) => ( <div key={i} style={{ marginBottom: '0.5rem' }}> <span style={{ color: 'var(--accent-gold)', fontWeight: 'bold' }}>[{chat.sender}]:</span> {chat.text} </div> ))}
           </div>
-          
-          <form onSubmit={handleSend} style={{ display: 'flex', gap: '0.5rem' }}>
+          <form onSubmit={(e) => { e.preventDefault(); if (message) { onSendMessage(message); setMessage(''); } }} style={{ display: 'flex', gap: '0.5rem' }}>
              <input className="input-field" placeholder="Party message..." value={message} onChange={(e) => setMessage(e.target.value)} />
              <button type="submit" className="btn" style={{ padding: '0.6rem' }}><Send size={16} /></button>
           </form>
         </div>
-        
         <div className="dice-container" style={{ marginTop: '1rem' }}>
           {[4, 6, 8, 10, 12, 20].map(d => ( <button key={d} className="die-btn" style={{ padding: '1rem' }} onClick={() => onRollPhysics(d, `D${d}`)}> <Dices size={20} color="var(--accent-gold)" /> </button> ))}
         </div>
