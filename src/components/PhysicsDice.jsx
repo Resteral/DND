@@ -4,8 +4,7 @@ import { useFrame } from '@react-three/fiber';
 import { Text } from '@react-three/drei';
 import * as THREE from 'three';
 
-const DiceD20 = ({ position = [0, 5, 0], onResult }) => {
-  // Linear and Angular damping help the dice lose momentum and eventually stop
+const PhysicsDice = ({ sides = 20, position = [0, 5, 0], onResult }) => {
   const [ref, api] = useSphere(() => ({
     mass: 1.5,
     position,
@@ -13,30 +12,40 @@ const DiceD20 = ({ position = [0, 5, 0], onResult }) => {
     linearDamping: 0.6,
     angularDamping: 0.5,
     velocity: [Math.random() * 8 - 4, -5, Math.random() * 8 - 4],
-    angularVelocity: [Math.random() * 15, Math.random() * 15, Math.random() * 15],
+    angularVelocity: [Math.random() * 20, Math.random() * 20, Math.random() * 20],
     material: { friction: 0.8, restitution: 0.3 }
   }));
 
   const [result, setResult] = useState(null);
   const stableCount = useRef(0);
   const hasReported = useRef(false);
+  const velocity = useRef([0, 0, 0]);
+
+  useEffect(() => {
+    const unsubscribe = api.velocity.subscribe((v) => {
+      velocity.current = v;
+    });
+    return () => unsubscribe();
+  }, [api.velocity]);
 
   useFrame(() => {
-    // Better stop detection logic
-    api.velocity.subscribe((v) => {
-      const isMoving = Math.abs(v[0]) > 0.05 || Math.abs(v[1]) > 0.05 || Math.abs(v[2]) > 0.05;
-      if (!isMoving) {
-        stableCount.current++;
-        if (stableCount.current > 40 && !hasReported.current) {
-          const finalValue = Math.floor(Math.random() * 20) + 1;
-          setResult(finalValue);
-          onResult(finalValue);
-          hasReported.current = true;
-        }
-      } else {
-        stableCount.current = 0;
+    if (hasReported.current) return;
+
+    const [vx, vy, vz] = velocity.current;
+    // Lower threshold for "moving" to ensure it actually stops
+    const isMoving = Math.abs(vx) > 0.01 || Math.abs(vy) > 0.01 || Math.abs(vz) > 0.01;
+
+    if (!isMoving) {
+      stableCount.current++;
+      if (stableCount.current > 80) { // Wait longer to ensure stability
+        const finalValue = Math.floor(Math.random() * sides) + 1;
+        setResult(finalValue);
+        onResult(finalValue);
+        hasReported.current = true;
       }
-    });
+    } else {
+      stableCount.current = 0;
+    }
   });
 
   return (
@@ -46,7 +55,7 @@ const DiceD20 = ({ position = [0, 5, 0], onResult }) => {
         <meshStandardMaterial 
           color="#c5a059" 
           metalness={0.9} 
-          roughness={0.1} 
+          roughness={0.1}
           emissive="#c5a059"
           emissiveIntensity={0.2}
         />
@@ -54,14 +63,13 @@ const DiceD20 = ({ position = [0, 5, 0], onResult }) => {
       
       {result && (
         <Text
-          position={[0, 0.7, 0]}
-          fontSize={0.4}
-          color="#000"
+          position={[0, 0.8, 0]}
+          fontSize={0.5}
+          color="#fff"
           anchorX="center"
           anchorY="middle"
-          outlineWidth={0.04}
-          outlineColor="#c5a059"
-          font="https://fonts.gstatic.com/s/outfit/v11/QGYsz_NR7DWCrc7_m3mS8T_uydis.woff"
+          outlineWidth={0.05}
+          outlineColor="#000"
         >
           {result}
         </Text>
@@ -70,4 +78,4 @@ const DiceD20 = ({ position = [0, 5, 0], onResult }) => {
   );
 };
 
-export default DiceD20;
+export default PhysicsDice;

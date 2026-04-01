@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, useSearchParams } from 'react-r
 import Scene from './components/Scene';
 import UIOverlay from './components/UIOverlay';
 import LandingPage from './pages/LandingPage';
+import CharacterCreator from './pages/CharacterCreator';
 import { dungeonService, supabase } from './lib/supabase';
 import './App.css';
 
@@ -12,7 +13,9 @@ function VTTSession() {
   const [selectedId, setSelectedId] = useState(null);
   const [activeDice, setActiveDice] = useState([]);
   const [diceHistory, setDiceHistory] = useState([]);
+  const [chatHistory, setChatHistory] = useState([]);
   const [showFog, setShowFog] = useState(false);
+  const [showTorches, setShowTorches] = useState(false);
   const [vfxs, setVfxs] = useState([]);
   const channelRef = useRef(null);
 
@@ -26,7 +29,8 @@ function VTTSession() {
       position: [0, 0, 0],
       hp: '54/54',
       stats: { str: 18, dex: 14, con: 16, int: 8, wis: 10, cha: 12 },
-      soundUrl: null
+      soundUrl: null,
+      modelUrl: null
     }
   ]);
 
@@ -45,13 +49,21 @@ function VTTSession() {
       .on('broadcast', { event: 'vfx-spell' }, ({ payload }) => {
         setVfxs(prev => [...prev, payload]);
       })
-      .on('broadcast', { event: 'toggle-fog' }, ({ payload }) => {
-        setShowFog(payload.showFog);
+      .on('broadcast', { event: 'chat-msg' }, ({ payload }) => {
+        setChatHistory(prev => [...prev, payload].slice(-15));
       })
+      .on('broadcast', { event: 'toggle-fog' }, ({ payload }) => { setShowFog(payload.showFog); })
+      .on('broadcast', { event: 'toggle-torch' }, ({ payload }) => { setShowTorches(payload.showTorches); })
       .subscribe();
 
     return () => { supabase.removeChannel(channelRef.current); };
   }, [params]);
+
+  const handleSendMessage = (text) => {
+    const chat = { id: Date.now(), sender: 'DM', text, time: new Date().toLocaleTimeString() };
+    setChatHistory(prev => [...prev, chat].slice(-15));
+    channelRef.current?.send({ type: 'broadcast', event: 'chat-msg', payload: chat });
+  };
 
   const handleMoveCharacter = (charId, newPosition) => {
     setCharacters(prev => prev.map(c => (c.id === charId) ? { ...c, position: newPosition } : c));
@@ -62,24 +74,10 @@ function VTTSession() {
     if (selectedId === null) return;
     const char = characters.find(c => (c.id ?? 0) === selectedId);
     if (!char) return;
-
-    const vfx = {
-      id: Date.now(),
-      position: [char.position[0], 1.2, char.position[2]],
-      color: color
-    };
-    
+    const vfx = { id: Date.now(), position: [char.position[0], 1.2, char.position[2]], color };
     setVfxs(prev => [...prev, vfx]);
     channelRef.current?.send({ type: 'broadcast', event: 'vfx-spell', payload: vfx });
-    
-    // Also roll a d20 for effect
-    handleRollPhysics(20, 'ARCANE CAST');
-  };
-
-  const handleToggleFog = () => {
-    const newState = !showFog;
-    setShowFog(newState);
-    channelRef.current?.send({ type: 'broadcast', event: 'toggle-fog', payload: { showFog: newState } });
+    handleRollPhysics(20, 'ARCANE SPELL');
   };
 
   const handleRollPhysics = (sides, label) => {
@@ -91,17 +89,16 @@ function VTTSession() {
     channelRef.current?.send({ type: 'broadcast', event: 'dice-roll', payload: { diceId, sides, position, entity, label } });
   };
 
-  const handleDiceResult = useCallback((diceId, result) => {
-    setDiceHistory(prev => prev.map(roll => roll.id === diceId ? { ...roll, result } : roll));
-  }, []);
-
-  const handleSaveDungeon = async (name) => {
-    await dungeonService.saveDungeon(name, { characters, roomType });
+  const handleToggleFog = () => {
+    const newState = !showFog;
+    setShowFog(newState);
+    channelRef.current?.send({ type: 'broadcast', event: 'toggle-fog', payload: { showFog: newState } });
   };
 
-  const handleLoadDungeon = async (id) => {
-    const data = await dungeonService.loadDungeon(id);
-    if (data?.config) { setCharacters(data.config.characters); setRoomType(data.config.roomType); }
+  const handleToggleTorches = () => {
+    const newState = !showTorches;
+    setShowTorches(newState);
+    channelRef.current?.send({ type: 'broadcast', event: 'toggle-torch', payload: { showTorches: newState } });
   };
 
   return (
@@ -109,8 +106,8 @@ function VTTSession() {
       <Scene 
         characters={characters} roomType={roomType} 
         onSelectCharacter={setSelectedId} onMoveCharacter={handleMoveCharacter}
-        selectedId={selectedId} activeDice={activeDice} onDiceResult={handleDiceResult}
-        showFog={showFog} vfxs={vfxs} onCompleteVFX={(id) => setVfxs(prev => prev.filter(v => v.id !== id))}
+        selectedId={selectedId} activeDice={activeDice} onDiceResult={(id, res) => setDiceHistory(prev => prev.map(r => r.id === id ? { ...r, result: res } : r))}
+        showFog={showFog} showTorches={showTorches} vfxs={vfxs} onCompleteVFX={(id) => setVfxs(prev => prev.filter(v => v.id !== id))}
       />
       <UIOverlay 
         onImportSuccess={(c) => { 
@@ -119,10 +116,12 @@ function VTTSession() {
           setSelectedId(id);
         }} 
         onRoomChange={setRoomType} onSpawnProp={(p) => setCharacters(prev => [...prev, { ...p, id: characters.length, type: 'prop' }])}
-        onRollPhysics={handleRollPhysics} onClearDice={() => setActiveDice([])} onToggleFog={handleToggleFog} showFog={showFog}
+        onRollPhysics={handleRollPhysics} onClearDice={() => setActiveDice([])} onToggleFog={handleToggleFog} onToggleTorches={handleToggleTorches} onSendMessage={handleSendMessage}
+        showFog={showFog} showTorches={showTorches} chatHistory={chatHistory}
         onSaveSound={(id, url) => setCharacters(prev => prev.map(c => (c.id ?? 0) === id ? { ...c, soundUrl: url } : c))}
-        onSaveDungeon={handleSaveDungeon} onLoadDungeon={handleLoadDungeon} onCastSpell={handleCastSpell}
-        roomType={roomType} characters={characters} selectedId={selectedId} diceHistory={diceHistory}
+        onSaveDungeon={async (name) => await dungeonService.saveDungeon(name, { characters, roomType })} 
+        onLoadDungeon={async (id) => { const data = await dungeonService.loadDungeon(id); if (data?.config) { setCharacters(data.config.characters); setRoomType(data.config.roomType); } }} 
+        onCastSpell={handleCastSpell} roomType={roomType} characters={characters} selectedId={selectedId} diceHistory={diceHistory}
       />
     </>
   );
@@ -133,6 +132,7 @@ function App() {
     <Router>
       <Routes>
         <Route path="/" element={<LandingPage />} />
+        <Route path="/create-character" element={<CharacterCreator />} />
         <Route path="/session" element={<VTTSession />} />
       </Routes>
     </Router>
