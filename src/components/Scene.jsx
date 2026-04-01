@@ -10,9 +10,8 @@ import ModelLoader from './ModelLoader';
 import PhysicsDice from './PhysicsDice';
 
 const Token = ({ character, isSelected, onClick, onMove }) => {
-  const [targetPos, setTargetPos] = useState(new THREE.Vector3(...character.position));
   const meshRef = useRef();
-
+  
   useFrame((state, delta) => {
     if (meshRef.current) {
       const currentPos = meshRef.current.position;
@@ -20,6 +19,9 @@ const Token = ({ character, isSelected, onClick, onMove }) => {
       currentPos.lerp(destPos, 0.1);
     }
   });
+
+  const hpPerc = Math.max(0, character.hp_current / character.hp_max);
+  const hpColor = hpPerc > 0.5 ? '#4bff4b' : (hpPerc > 0.2 ? '#ffb700' : '#ff4b4b');
 
   return (
     <group position={character.position} onClick={(e) => { e.stopPropagation(); onClick(); }}>
@@ -39,6 +41,18 @@ const Token = ({ character, isSelected, onClick, onMove }) => {
           </mesh>
         </Float>
       )}
+
+      {/* Health Bar Visualization */}
+      <group position={[0, 1.8, 0]}>
+        <mesh position={[0, 0, 0]}>
+           <planeGeometry args={[1, 0.1]} />
+           <meshBasicMaterial color="#000" transparent opacity={0.5} />
+        </mesh>
+        <mesh position={[-0.5 + hpPerc/2, 0, 0.01]}>
+           <planeGeometry args={[hpPerc, 0.08]} />
+           <meshBasicMaterial color={hpColor} />
+        </mesh>
+      </group>
 
       <Text position={[0, 1.5, 0]} fontSize={0.2} color="white" anchorX="center" anchorY="middle">
         {character.name}
@@ -62,29 +76,38 @@ const SpellVFX = ({ id, position, color, onComplete }) => {
   );
 };
 
+const FloatingText = ({ id, text, position, color, onComplete }) => {
+  const [y, setY] = useState(position[1]);
+  const [opacity, setOpacity] = useState(1);
+  
+  useFrame((state, delta) => {
+    setY(prev => prev + delta);
+    setOpacity(prev => Math.max(0, prev - delta * 0.5));
+    if (opacity <= 0) onComplete(id);
+  });
+
+  return (
+    <Text position={[position[0], y, position[2]]} fontSize={0.4} color={color} opacity={opacity}>
+      {text}
+    </Text>
+  );
+};
+
 const AoETargeter = ({ onCast }) => {
   const { viewport, mouse, raycaster, scene } = useThree();
   const targetRef = useRef();
-
   useFrame(() => {
     if (targetRef.current) {
        raycaster.setFromCamera(mouse, scene.children.find(c => c.isPerspectiveCamera));
        const intersects = raycaster.intersectObjects(scene.children, true);
        const floor = intersects.find(i => i.object.name === 'floor');
-       if (floor) {
-         targetRef.current.position.set(floor.point.x, 0.1, floor.point.z);
-       }
+       if (floor) targetRef.current.position.set(floor.point.x, 0.1, floor.point.z);
     }
   });
-
   return (
     <group ref={targetRef} onClick={(e) => { e.stopPropagation(); onCast(targetRef.current.position.clone()); }}>
-      <Torus args={[2, 0.05, 16, 100]} rotation={[Math.PI/2, 0, 0]}>
-        <meshBasicMaterial color="#ff4b4b" transparent opacity={0.5} />
-      </Torus>
-      <Circle args={[2]} rotation={[-Math.PI/2, 0, 0]} position={[0, -0.01, 0]}>
-        <meshBasicMaterial color="#ff4b4b" transparent opacity={0.1} />
-      </Circle>
+      <Torus args={[2, 0.05, 16, 100]} rotation={[Math.PI/2, 0, 0]}> <meshBasicMaterial color="#ff4b4b" transparent opacity={0.5} /> </Torus>
+      <Circle args={[2]} rotation={[-Math.PI/2, 0, 0]} position={[0, -0.01, 0]}> <meshBasicMaterial color="#ff4b4b" transparent opacity={0.1} /> </Circle>
     </group>
   );
 };
@@ -107,18 +130,12 @@ const Room = ({ type, showFog, showTorches }) => {
 const Scene = ({ 
   characters, roomType, onSelectCharacter, onMoveCharacter, selectedId, 
   activeDice, onDiceResult, showFog, showTorches, vfxs, onCompleteVFX,
-  activeSpell, onCastSpell 
+  activeSpell, onCastSpell, alerts, onCompleteAlert 
 }) => {
   const [clickState, setClickState] = useState(null);
-
-  const handlePointerDown = (e) => {
-    if (activeSpell) return;
-    if (e.button === 0) setClickState({ x: e.clientX, y: e.clientY });
-  };
-
+  const handlePointerDown = (e) => { if (activeSpell) return; if (e.button === 0) setClickState({ x: e.clientX, y: e.clientY }); };
   const handlePointerUp = (e) => {
-    if (activeSpell) return;
-    if (!clickState) return;
+    if (activeSpell || !clickState) return;
     const dist = Math.sqrt(Math.pow(e.clientX - clickState.x, 2) + Math.pow(e.clientY - clickState.y, 2));
     if (dist < 5 && selectedId !== null && e.intersections[0]?.object.name === 'floor') {
       const point = e.intersections[0].point;
@@ -132,26 +149,16 @@ const Scene = ({
       <Canvas shadows onPointerDown={handlePointerDown} onPointerUp={handlePointerUp}>
         <PerspectiveCamera makeDefault position={[8, 10, 8]} fov={40} />
         <OrbitControls makeDefault enableDamping dampingFactor={0.05} maxPolarAngle={Math.PI / 2.2} minDistance={5} maxDistance={20} />
-        
         <ambientLight intensity={showTorches ? 0.2 : 0.5} />
         <spotLight position={[10, 10, 10]} angle={0.15} penumbra={1} intensity={1} castShadow />
-        
         <Physics gravity={[0, -9.81, 0]}>
            <Room type={roomType} showFog={showFog} showTorches={showTorches} />
-           {characters.map((char, i) => (
-             <Token key={char.id ?? i} character={char} isSelected={(char.id ?? i) === selectedId} onClick={() => onSelectCharacter(char.id ?? i)} onMove={(pos) => onMoveCharacter(char.id ?? i, pos)} />
-           ))}
-           {activeDice.map(d => (
-             <PhysicsDice key={d.id} sides={d.sides} position={d.position} onResult={(res) => onDiceResult(d.id, res)} />
-           ))}
+           {characters.map((char, i) => ( <Token key={char.id ?? i} character={char} isSelected={(char.id ?? i) === selectedId} onClick={() => onSelectCharacter(char.id ?? i)} onMove={(pos) => onMoveCharacter(char.id ?? i, pos)} /> ))}
+           {activeDice.map(d => ( <PhysicsDice key={d.id} sides={d.sides} position={d.position} onResult={(res) => onDiceResult(d.id, res)} /> ))}
         </Physics>
-
         {vfxs.map(v => ( <SpellVFX key={v.id} {...v} onComplete={onCompleteVFX} /> ))}
-        
-        {activeSpell === 'fireball' && (
-           <AoETargeter onCast={(pos) => onCastSpell(pos, '#ff4b4b')} />
-        )}
-
+        {alerts.map(a => ( <FloatingText key={a.id} id={a.id} text={a.text} position={a.position} color={a.color} onComplete={onCompleteAlert} /> ))}
+        {activeSpell === 'fireball' && ( <AoETargeter onCast={(pos) => onCastSpell(pos, '#ff4b4b')} /> )}
         <Environment preset="night" />
       </Canvas>
     </div>

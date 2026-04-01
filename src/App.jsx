@@ -20,12 +20,13 @@ function VTTSession() {
   const [showFog, setShowFog] = useState(false);
   const [showTorches, setShowTorches] = useState(false);
   const [vfxs, setVfxs] = useState([]);
+  const [alerts, setAlerts] = useState([]);
   const [activeSpell, setActiveSpell] = useState(null);
   const [connectionStatus, setConnectionStatus] = useState('connecting');
   const channelRef = useRef(null);
 
   const [characters, setCharacters] = useState([
-    { id: 0, name: 'Turok the Brave', color: '#ff4b4b', level: 5, class: 'Barbarian', position: [0, 0, 0], hp: '54/54', stats: { str: 18, dex: 14, con: 16, int: 8, wis: 10, cha: 12 } }
+    { id: 0, name: 'Turok the Brave', color: '#ff4b4b', level: 5, class: 'Barbarian', position: [0, 0, 0], hp_max: 54, hp_current: 54, stats: { str: 18, dex: 14, con: 16, int: 8, wis: 10, cha: 12 } }
   ]);
 
   useEffect(() => {
@@ -36,6 +37,11 @@ function VTTSession() {
     channelRef.current = supabase.channel(channelId);
     channelRef.current
       .on('broadcast', { event: 'token-move' }, ({ payload }) => { setCharacters(prev => prev.map(c => (c.id === payload.charId) ? { ...c, position: payload.newPosition } : c)); })
+      .on('broadcast', { event: 'token-spawn' }, ({ payload }) => { setCharacters(prev => [...prev, payload]); })
+      .on('broadcast', { event: 'token-hp' }, ({ payload }) => { 
+          setCharacters(prev => prev.map(c => (c.id === payload.charId) ? { ...c, hp_current: payload.newHP } : c));
+          setAlerts(prev => [...prev, { id: Date.now(), text: (payload.mod > 0 ? '+' : '') + payload.mod, position: payload.pos, color: payload.mod > 0 ? '#4bff4b' : '#ff4b4b' }]);
+      })
       .on('broadcast', { event: 'dice-roll' }, ({ payload }) => { setActiveDice(prev => [...prev, { id: payload.diceId, sides: payload.sides, position: payload.position }]); setDiceHistory(prev => [{ id: payload.diceId, entity: payload.entity, label: payload.label, sides: payload.sides, result: null, time: new Date().toLocaleTimeString() }, ...prev.slice(0, 10)]); })
       .on('broadcast', { event: 'chat-msg' }, ({ payload }) => { setChatHistory(prev => [...prev, payload].slice(-15)); })
       .on('broadcast', { event: 'initiative-sync' }, ({ payload }) => { setInitiative(payload.initiative); })
@@ -52,13 +58,25 @@ function VTTSession() {
     const vfx = { id: Date.now(), position: [pos.x, 0.5, pos.z], color };
     setVfxs(prev => [...prev, vfx]);
     channelRef.current?.send({ type: 'broadcast', event: 'vfx-spell', payload: vfx });
-    handleSendMessage(`Cast fireball at target location!`, 'Spellcaster');
+    handleSendMessage(`Detonated tactical spell at target location!`, 'Spellcaster');
   };
 
   const handleSendMessage = (text, sender = 'DM') => {
     const chat = { id: Date.now(), sender, text, time: new Date().toLocaleTimeString() };
     setChatHistory(prev => [...prev, chat].slice(-15));
     channelRef.current?.send({ type: 'broadcast', event: 'chat-msg', payload: chat });
+  };
+
+  const handleModifyHP = (id, mod) => {
+    setCharacters(prev => prev.map(c => {
+       if (c.id === id) {
+          const newHP = Math.max(0, Math.min(c.hp_max, c.hp_current + mod));
+          setAlerts(al => [...al, { id: Date.now(), text: (mod > 0 ? '+' : '') + mod, position: [c.position[0], 2, c.position[2]], color: mod > 0 ? '#4bff4b' : '#ff4b4b' }]);
+          channelRef.current?.send({ type: 'broadcast', event: 'token-hp', payload: { charId: id, newHP, mod, pos: [c.position[0], 2, c.position[2]] } });
+          return { ...c, hp_current: newHP };
+       }
+       return c;
+    }));
   };
 
   return (
@@ -70,22 +88,32 @@ function VTTSession() {
       </div>
 
       <Scene 
-        characters={characters} roomType={roomType} selectedId={selectedId} activeDice={activeDice} showFog={showFog} showTorches={showTorches} vfxs={vfxs} activeSpell={activeSpell}
+        characters={characters} roomType={roomType} selectedId={selectedId} activeDice={activeDice} showFog={showFog} showTorches={showTorches} vfxs={vfxs} alerts={alerts} activeSpell={activeSpell}
         onSelectCharacter={setSelectedId} 
         onDiceResult={(id, res) => setDiceHistory(prev => prev.map(r => r.id === id ? { ...r, result: res } : r))}
         onMoveCharacter={(id, pos) => { setCharacters(prev => prev.map(c => (c.id === id) ? { ...c, position: pos } : c)); channelRef.current?.send({ type: 'broadcast', event: 'token-move', payload: { charId: id, newPosition: pos } }); }}
         onCompleteVFX={(id) => setVfxs(prev => prev.filter(v => v.id !== id))}
+        onCompleteAlert={(id) => setAlerts(prev => prev.filter(a => a.id !== id))}
         onCastSpell={handleCastAtPos}
       />
       <UIOverlay 
         characters={characters} roomType={roomType} selectedId={selectedId} diceHistory={diceHistory} initiative={initiative} activeTrack={activeTrack} chatHistory={chatHistory} showFog={showFog} showTorches={showTorches} activeSpell={activeSpell}
-        onImportSuccess={async (url) => { try { const c = await characterImporter.importFromDDB(url); const id = characters.length; setCharacters(prev => [...prev, { ...c, id, color: '#c5a059', position: [Math.random()*4-2, 0, Math.random()*4-2] }]); setSelectedId(id); } catch(e) { alert(e.message); } }}
+        onImportSuccess={async (url) => { try { const c = await characterImporter.importFromDDB(url); const id = characters.length; 
+            const hp = parseInt(c.hp?.split('/')[0] || '10');
+            setCharacters(prev => [...prev, { ...c, id, hp_max: hp, hp_current: hp, color: '#c5a059', position: [Math.random()*4-2, 0, Math.random()*4-2] }]); setSelectedId(id); } catch(e) { alert(e.message); } }}
         onRoomChange={setRoomType} onRollPhysics={(sides, label) => { const id = Date.now(); const pos=[Math.random()*2-1, 6, Math.random()*2-1]; setActiveDice(prev=>[...prev, {id, sides, position:pos}]); channelRef.current?.send({type:'broadcast', event:'dice-roll', payload:{diceId:id, sides, position:pos, entity:'User', label}}); }}
         onClearDice={() => setActiveDice([])} onToggleFog={() => { const s = !showFog; setShowFog(s); channelRef.current?.send({type:'broadcast', event:'toggle-fog', payload:{showFog:s}}); }}
         onToggleTorches={() => { const s = !showTorches; setShowTorches(s); channelRef.current?.send({type:'broadcast', event:'toggle-torch', payload:{showTorches:s}}); }}
         onSendMessage={handleSendMessage} onInitiativeUpdate={(newInit) => { setInitiative(newInit); channelRef.current?.send({type:'broadcast', event:'initiative-sync', payload:{initiative:newInit}}); }} 
         onTrackChange={(track) => { setActiveTrack(track); channelRef.current?.send({type:'broadcast', event:'track-sync', payload:{track}}); }}
-        onSetSpellTarget={setActiveSpell}
+        onSetSpellTarget={setActiveSpell} onSpawnMonster={(m) => {
+           const id = Date.now(); const pos = [Math.random()*6-3, 0, Math.random()*6-3];
+           const hp = parseInt(m.hp.split('/')[0]);
+           const newChar = { ...m, id, hp_max: hp, hp_current: hp, position: pos };
+           setCharacters(prev => [...prev, newChar]);
+           channelRef.current?.send({ type: 'broadcast', event: 'token-spawn', payload: newChar });
+        }}
+        onModifyHP={handleModifyHP}
         onCastSpell={(color) => { if (selectedId === null) return; const char = characters.find(c => (c.id ?? 0) === selectedId); if (!char) return; const vfx = { id: Date.now(), position: [char.position[0], 1.2, char.position[2]], color }; setVfxs(prev => [...prev, vfx]); channelRef.current?.send({ type: 'broadcast', event: 'vfx-spell', payload: vfx }); }}
       />
     </>
