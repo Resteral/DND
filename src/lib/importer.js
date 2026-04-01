@@ -1,42 +1,48 @@
+import axios from 'axios';
+
 export const characterImporter = {
   async importFromDDB(url) {
-    // Note: In a production environment, this would hit a backend proxy
-    // to bypass CORS for dndbeyond.com/character-data/xxxxxx
-    // For this prototype, I'll simulate fetching the data
-    
-    // Extract ID (e.g. 12345678 from https://www.dndbeyond.com/characters/12345678)
-    const match = url.match(/characters\/(\d+)/);
-    const charId = match ? match[1] : null;
-    
-    if (!charId) throw new Error('Invalid D&D Beyond URL');
-    
-    // In a real app: fetch(`https://character-service.dndbeyond.com/character/v3/character/${charId}`)
-    
-    console.log(`Importing character ${charId}...`);
-    
-    // Returning mock data that mimics DDB structure
-    return {
-      id: charId,
-      name: "Turok the Brave",
-      race: "Half-Orc",
-      class: "Barbarian",
-      level: 5,
-      hp: 54,
-      stats: {
-        str: 18,
-        dex: 14,
-        con: 16,
-        int: 8,
-        wis: 10,
-        cha: 12
-      },
-      description: "A towering warrior with skin like aged leather and a notched greataxe.",
-      items: ["Greataxe", "Chain Mail", "Healing Potion"],
-      source: 'D&D Beyond'
-    };
-  },
+    try {
+      console.log('Initiating Arcane Import from D&D Beyond:', url);
+      
+      // Extract Character ID from URL (e.g., https://www.dndbeyond.com/characters/12345678)
+      const match = url.match(/characters\/(\d+)/);
+      if (!match) throw new Error('Invalid D&D Beyond character URL. Please use the full address (e.g. /characters/12345)');
+      
+      const charId = match[1];
+      const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(`https://character-service.dndbeyond.com/character/v2/character/${charId}`)}`;
 
-  mapTo3DPrompt(character) {
-    return `${character.race} ${character.class} with a ${character.items[0]}, glowing eyes, battle-worn armor`;
+      const response = await axios.get(proxyUrl);
+      const data = JSON.parse(response.data.contents);
+
+      if (!data.success) throw new Error('Failed to summon character data from the weave.');
+
+      const char = data.data;
+      
+      // Map D&D Beyond JSON to Arcane VTT structure
+      // Ability score mapping: STR(1), DEX(2), CON(3), INT(4), WIS(5), CHA(6)
+      const getStat = (id) => char.stats.find(s => s.id === id)?.value || 10;
+      
+      return {
+        id: char.id,
+        name: char.name,
+        class: char.classes[0]?.definition?.name || 'Adventurer',
+        level: char.classes.reduce((sum, c) => sum + c.level, 0),
+        hp: `${char.baseHitPoints}/${char.baseHitPoints}`, // Simplified HP
+        stats: {
+          str: getStat(1),
+          dex: getStat(2),
+          con: getStat(3),
+          int: getStat(4),
+          wis: getStat(5),
+          cha: getStat(6)
+        },
+        image: char.decorations?.avatarUrl || null,
+        modelUrl: null // Ready for AI Forge integration
+      };
+    } catch (error) {
+      console.error('Portal Import Error:', error.message);
+      throw error;
+    }
   }
 };
