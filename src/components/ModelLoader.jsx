@@ -3,9 +3,9 @@ import { useGLTF, Float } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 
-const ModelLoader = ({ url, color = '#7b4eb2', isSelected = false }) => {
-  // Use GLTF loader for Meshy assets
+const ModelLoader = ({ url, isSelected = false }) => {
   const { scene } = useGLTF(url);
+  const clonedScene = React.useMemo(() => scene.clone(), [scene]);
   const meshRef = useRef();
 
   useFrame((state) => {
@@ -16,21 +16,17 @@ const ModelLoader = ({ url, color = '#7b4eb2', isSelected = false }) => {
     }
   });
 
-  // Apply materials from color if needed or just use pure mesh
-  scene.traverse((child) => {
+  clonedScene.traverse((child) => {
     if (child.isMesh) {
       child.castShadow = true;
       child.receiveShadow = true;
-      // Optionally tint the model
-      // child.material.emissive = new THREE.Color(color);
-      // child.material.emissiveIntensity = 0.1;
     }
   });
 
   return (
     <primitive 
       ref={meshRef}
-      object={scene} 
+      object={clonedScene} 
       scale={1.5} 
       position={[0, 0.4, 0]} 
     />

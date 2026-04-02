@@ -26,35 +26,45 @@ const Token = ({ character, isSelected, onClick, onMove }) => {
   return (
     <group position={character.position} onClick={(e) => { e.stopPropagation(); onClick(); }}>
       <mesh ref={meshRef}>
-        <cylinderGeometry args={[0.5, 0.5, 0.1, 32]} />
+        <cylinderGeometry args={[0.6, 0.6, 0.15, 32]} />
         <meshStandardMaterial color={isSelected ? 'var(--accent-gold)' : character.color} metalness={0.8} roughness={0.2} />
         {isSelected && <pointLight position={[0, 0.5, 0]} intensity={1.5} color="var(--accent-gold)" distance={3} />}
       </mesh>
       
       {character.modelUrl ? (
-        <ModelLoader url={character.modelUrl} />
+        <ModelLoader url={character.modelUrl} isSelected={isSelected} />
       ) : (
         <Float speed={2} rotationIntensity={0.5} floatIntensity={0.5}>
-          <mesh position={[0, 0.6, 0]}>
+          <mesh position={[0, 0.8, 0]}>
             <sphereGeometry args={[0.4, 32, 32]} />
             <meshStandardMaterial color={character.color} emissive={character.color} emissiveIntensity={0.5} />
           </mesh>
         </Float>
       )}
 
-      {/* Health Bar Visualization */}
-      <group position={[0, 1.8, 0]}>
-        <mesh position={[0, 0, 0]}>
-           <planeGeometry args={[1, 0.1]} />
-           <meshBasicMaterial color="#000" transparent opacity={0.5} />
+      {/* Persistent Status Effects */}
+      {character.status === 'burning' && <Sparkles count={50} scale={1} size={4} speed={0.8} color="#ff4b4b" position={[0, 1, 0]} />}
+      {character.status === 'poisoned' && <Sparkles count={30} scale={1} size={3} speed={0.4} color="#4bff4b" position={[0, 1, 0]} />}
+      {character.status === 'shielded' && (
+        <mesh position={[0, 1, 0]}>
+           <sphereGeometry args={[1.2, 32, 32]} />
+           <meshStandardMaterial color="#4b4bff" transparent opacity={0.1} side={THREE.DoubleSide} />
         </mesh>
-        <mesh position={[-0.5 + hpPerc/2, 0, 0.01]}>
-           <planeGeometry args={[hpPerc, 0.08]} />
+      )}
+
+      {/* Health Bar Visualization */}
+      <group position={[0, 2.2, 0]}>
+        <mesh position={[0, 0, 0]}>
+           <planeGeometry args={[1.2, 0.15]} />
+           <meshBasicMaterial color="#000" transparent opacity={0.6} />
+        </mesh>
+        <mesh position={[-0.6 + (hpPerc * 0.6), 0, 0.01]}>
+           <planeGeometry args={[hpPerc * 1.2, 0.1]} />
            <meshBasicMaterial color={hpColor} />
         </mesh>
       </group>
 
-      <Text position={[0, 1.5, 0]} fontSize={0.2} color="white" anchorX="center" anchorY="middle">
+      <Text position={[0, 1.8, 0]} fontSize={0.25} color="white" anchorX="center" anchorY="middle" className="entity-label">
         {character.name}
       </Text>
     </group>
@@ -113,16 +123,69 @@ const AoETargeter = ({ onCast }) => {
 };
 
 const Room = ({ type, showFog, showTorches }) => {
-  const isDungeon = type === 'dungeon';
+  const getFloorColor = () => {
+    switch (type) {
+      case 'dungeon': return '#0a0a0a';
+      case 'tavern': return '#2a1a10';
+      case 'forest': return '#0b160b';
+      case 'temple': return '#1a1a2a';
+      default: return '#151515';
+    }
+  };
+
+  const getGridColor = () => {
+    switch (type) {
+      case 'forest': return '#1d2d1d';
+      case 'tavern': return '#4a2d1a';
+      case 'temple': return '#2d2d4a';
+      default: return '#333';
+    }
+  };
+
   return (
     <group>
       <mesh receiveShadow rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.05, 0]} name="floor">
-        <planeGeometry args={[20, 20]} />
-        <meshStandardMaterial color={isDungeon ? '#151515' : '#2a1a10'} roughness={0.8} />
+        <planeGeometry args={[40, 40]} />
+        <meshStandardMaterial color={getFloorColor()} roughness={0.9} metalness={0.1} />
       </mesh>
-      <gridHelper args={[20, 20, '#444', '#222']} position={[0, 0.01, 0]} />
-      {showFog && <fog attach="fog" args={['#000', 5, 15]} />}
-      <Stars radius={100} depth={50} count={5000} factor={4} saturation={0} fade speed={1} />
+      <gridHelper args={[40, 40, getGridColor(), '#111']} position={[0, 0.01, 0]} />
+      
+      {type === 'tavern' && (
+        <group position={[0, 0, 0]}>
+           {[[-6, -6], [6, -6], [-6, 6], [6, 6]].map(([x, z], i) => (
+             <mesh key={i} position={[x, 2.5, z]} castShadow>
+               <boxGeometry args={[0.5, 5, 0.5]} />
+               <meshStandardMaterial color="#1a100a" />
+             </mesh>
+           ))}
+        </group>
+      )}
+
+      {type === 'forest' && (
+         <group>
+           {[...Array(30)].map((_, i) => (
+              <mesh key={i} position={[Math.sin(i * 1.5) * (10 + i/2), 2, Math.cos(i * 1.5) * (10 + i/2)]} castShadow>
+                 <coneGeometry args={[0.8, 4, 6]} />
+                 <meshStandardMaterial color="#0b1a0b" roughness={1} />
+              </mesh>
+           ))}
+         </group>
+      )}
+
+      {type === 'temple' && (
+        <group>
+           {[[-8, 0, -8], [8, 0, -8], [-8, 0, 8], [8, 0, 8]].map(([x, y, z], i) => (
+              <group key={i} position={[x, y, z]}>
+                <mesh position={[0, 2, 0]}> <cylinderGeometry args={[0.6, 0.6, 4, 16]} /> <meshStandardMaterial color="#3a3a4a" /> </mesh>
+                <mesh position={[0, 4, 0]}> <boxGeometry args={[1.5, 0.2, 1.5]} /> <meshStandardMaterial color="#4a4a5a" /> </mesh>
+              </group>
+           ))}
+           <Sparkles count={300} scale={20} size={2} speed={0.3} color="#ffd700" />
+        </group>
+      )}
+
+      {showFog && <fog attach="fog" args={['#000', 2, 25]} />}
+      <Stars radius={100} depth={50} count={6000} factor={4} saturation={0} fade speed={1} />
     </group>
   );
 };

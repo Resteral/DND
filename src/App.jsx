@@ -34,6 +34,44 @@ function VTTSession() {
     const isMock = !import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_URL.startsWith('https');
     setConnectionStatus(isMock ? 'mock' : 'real');
 
+    // Load dungeon if starting from archive
+    if (channelId.startsWith('dungeon-')) {
+      const dungeonId = channelId.replace('dungeon-', '');
+      const loadDungeon = async () => {
+        try {
+          const { data, error } = await supabase.from('dungeons').select('*').eq('id', dungeonId).single();
+          if (data && data.config) {
+            const config = data.config;
+            setCharacters(config.characters || []);
+            setRoomType(config.roomType || 'dungeon');
+            setShowFog(config.showFog || false);
+            setShowTorches(config.showTorches || false);
+            setInitiative(config.initiative || []);
+            setActiveTrack(config.activeTrack || null);
+            handleSendMessage(`Reality Stabilized. Restored realm: ${data.name}`, 'System');
+          }
+        } catch (e) { console.error('Dungeon load error:', e); }
+      };
+      loadDungeon();
+    }
+
+    // Load character if from vault
+    if (channelId.startsWith('vault-')) {
+      const heroId = channelId.replace('vault-', '');
+      const loadHero = async () => {
+        try {
+          const { data, error } = await supabase.from('characters').select('*').eq('id', heroId).single();
+          if (data) {
+             const hp = 10 + (data.stats.con || 10); // Simple HP calc for now
+             const newHero = { ...data, id: Date.now(), hp_max: hp, hp_current: hp, position: [0, 0, 0] };
+             setCharacters(prev => [...prev, newHero]);
+             handleSendMessage(`Summoned ${data.name} from the Arcanum Vault!`, 'System');
+          }
+        } catch (e) { console.error('Vault summon error:', e); }
+      };
+      loadHero();
+    }
+
     channelRef.current = supabase.channel(channelId);
     channelRef.current
       .on('broadcast', { event: 'token-move' }, ({ payload }) => { setCharacters(prev => prev.map(c => (c.id === payload.charId) ? { ...c, position: payload.newPosition } : c)); })
@@ -49,6 +87,14 @@ function VTTSession() {
       .on('broadcast', { event: 'vfx-spell' }, ({ payload }) => { setVfxs(prev => [...prev, payload]); })
       .on('broadcast', { event: 'toggle-fog' }, ({ payload }) => { setShowFog(payload.showFog); })
       .on('broadcast', { event: 'toggle-torch' }, ({ payload }) => { setShowTorches(payload.showTorches); })
+      .on('broadcast', { event: 'room-sync' }, ({ payload }) => { setRoomType(payload.roomType); })
+      .on('broadcast', { event: 'token-sound' }, ({ payload }) => { 
+          setCharacters(prev => prev.map(c => (c.id === payload.charId) ? { ...c, soundUrl: payload.soundUrl } : c));
+          new Audio(payload.soundUrl).play().catch(() => {});
+      })
+      .on('broadcast', { event: 'token-status' }, ({ payload }) => {
+          setCharacters(prev => prev.map(c => (c.id === payload.charId) ? { ...c, status: payload.status } : c));
+      })
       .subscribe((status) => { if (status === 'SUBSCRIBED') setConnectionStatus(isMock ? 'mock' : 'connected'); });
     return () => { supabase.removeChannel(channelRef.current); };
   }, [params]);
@@ -79,6 +125,15 @@ function VTTSession() {
     }));
   };
 
+  const handleSaveSession = async () => {
+    try {
+      const config = { characters, roomType, showFog, showTorches, initiative, activeTrack };
+      const sessionName = `Realm Session - ${new Date().toLocaleDateString()}`;
+      await dungeonService.saveDungeon(sessionName, config);
+      handleSendMessage(`Session preserved in the Arcanum Archive!`, 'System');
+    } catch (e) { alert('Failed to preserve session: ' + e.message); }
+  };
+
   return (
     <>
       <div style={{ position: 'fixed', top: '10px', left: '50%', transform: 'translateX(-50%)', zIndex: 10000, pointerEvents: 'none', display: 'flex', gap: '1rem' }}>
@@ -101,12 +156,29 @@ function VTTSession() {
         onImportSuccess={async (url) => { try { const c = await characterImporter.importFromDDB(url); const id = characters.length; 
             const hp = parseInt(c.hp?.split('/')[0] || '10');
             setCharacters(prev => [...prev, { ...c, id, hp_max: hp, hp_current: hp, color: '#c5a059', position: [Math.random()*4-2, 0, Math.random()*4-2] }]); setSelectedId(id); } catch(e) { alert(e.message); } }}
-        onRoomChange={setRoomType} onRollPhysics={(sides, label) => { const id = Date.now(); const pos=[Math.random()*2-1, 6, Math.random()*2-1]; setActiveDice(prev=>[...prev, {id, sides, position:pos}]); channelRef.current?.send({type:'broadcast', event:'dice-roll', payload:{diceId:id, sides, position:pos, entity:'User', label}}); }}
+        onRoomChange={(type) => { setRoomType(type); channelRef.current?.send({type:'broadcast', event:'room-sync', payload:{roomType:type}}); }}
+        onRollPhysics={(sides, label) => { const id = Date.now(); const pos=[Math.random()*2-1, 6, Math.random()*2-1]; setActiveDice(prev=>[...prev, {id, sides, position:pos}]); channelRef.current?.send({type:'broadcast', event:'dice-roll', payload:{diceId:id, sides, position:pos, entity:'User', label}}); }}
         onClearDice={() => setActiveDice([])} onToggleFog={() => { const s = !showFog; setShowFog(s); channelRef.current?.send({type:'broadcast', event:'toggle-fog', payload:{showFog:s}}); }}
         onToggleTorches={() => { const s = !showTorches; setShowTorches(s); channelRef.current?.send({type:'broadcast', event:'toggle-torch', payload:{showTorches:s}}); }}
         onSendMessage={handleSendMessage} onInitiativeUpdate={(newInit) => { setInitiative(newInit); channelRef.current?.send({type:'broadcast', event:'initiative-sync', payload:{initiative:newInit}}); }} 
         onTrackChange={(track) => { setActiveTrack(track); channelRef.current?.send({type:'broadcast', event:'track-sync', payload:{track}}); }}
-        onSetSpellTarget={setActiveSpell} onSpawnMonster={(m) => {
+        onSetSpellTarget={setActiveSpell} 
+        onSaveSound={(charId, soundUrl) => {
+           setCharacters(prev => prev.map(c => (c.id === charId) ? { ...c, soundUrl } : c));
+           channelRef.current?.send({ type: 'broadcast', event: 'token-sound', payload: { charId, soundUrl } });
+        }}
+        onSetStatus={(charId, status) => {
+           setCharacters(prev => prev.map(c => (c.id === charId) ? { ...c, status } : c));
+           channelRef.current?.send({ type: 'broadcast', event: 'token-status', payload: { charId, status } });
+        }}
+        onSpawnProp={(prop) => {
+           const id = Date.now();
+           const newProp = { ...prop, id, hp_max: 1, hp_current: 1 };
+           setCharacters(prev => [...prev, newProp]);
+           channelRef.current?.send({ type: 'broadcast', event: 'token-spawn', payload: newProp });
+           handleSendMessage(`Synthesized ${prop.name} for the Realm.`, 'System');
+        }}
+        onSpawnMonster={(m) => {
            const id = Date.now(); const pos = [Math.random()*6-3, 0, Math.random()*6-3];
            const hp = parseInt(m.hp.split('/')[0]);
            const newChar = { ...m, id, hp_max: hp, hp_current: hp, position: pos };
@@ -114,6 +186,7 @@ function VTTSession() {
            channelRef.current?.send({ type: 'broadcast', event: 'token-spawn', payload: newChar });
         }}
         onModifyHP={handleModifyHP}
+        onSaveDungeon={handleSaveSession}
         onCastSpell={(color) => { if (selectedId === null) return; const char = characters.find(c => (c.id ?? 0) === selectedId); if (!char) return; const vfx = { id: Date.now(), position: [char.position[0], 1.2, char.position[2]], color }; setVfxs(prev => [...prev, vfx]); channelRef.current?.send({ type: 'broadcast', event: 'vfx-spell', payload: vfx }); }}
       />
     </>

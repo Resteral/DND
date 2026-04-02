@@ -17,7 +17,7 @@ import { InitiativeTracker, AmbientAudio } from './CombatTools';
 const UIOverlay = ({ 
   onImportSuccess, onRoomChange, onSpawnProp, onRollPhysics, onClearDice, onSaveSound, 
   onSaveDungeon, onLoadDungeon, onCastSpell, onToggleFog, onToggleTorches, onSendMessage,
-  onInitiativeUpdate, onTrackChange, onSetSpellTarget, onSpawnMonster, onModifyHP,
+  onInitiativeUpdate, onTrackChange, onSetSpellTarget, onSpawnMonster, onModifyHP, onSetStatus,
   showFog, showTorches, roomType, characters, selectedId, diceHistory, chatHistory,
   initiative, activeTrack, activeSpell 
 }) => {
@@ -32,7 +32,18 @@ const UIOverlay = ({
 
   const selectedChar = characters.find((c, i) => (c.id ?? i) === selectedId);
 
-  const handleSage = async (e) => { e.preventDefault(); if (!sageMsg || isSageThinking) return; const msg = sageMsg; setSageMsg(''); setIsSageThinking(true); onSendMessage(`Summoning Sage logic: "${msg}"`); try { const res = await arcaneSage.summonResponse(msg); onSendMessage(`Sage Decree: ${res}`); } finally { setIsSageThinking(false); } };
+  const handleSage = async (e, mode = 'chat') => { 
+    if (e) e.preventDefault();
+    const msg = sageMsg || (mode === 'encounter' ? `Generate an encounter for a ${roomType}` : (mode === 'synthesis' ? `Design a 3D prop for a ${roomType}` : (mode === 'rules' ? 'Explain a common combat rule' : '')));
+    if (!msg || isSageThinking) return; 
+    setSageMsg(''); 
+    setIsSageThinking(true); 
+    onSendMessage(`Consulting Sage in ${mode.toUpperCase()} mode...`); 
+    try { 
+      const res = await arcaneSage.summonResponse(msg, chatHistory, mode); 
+      onSendMessage(`${mode.toUpperCase()} Decree: ${res}`, 'Arcane Sage'); 
+    } finally { setIsSageThinking(false); } 
+  };
 
   return (
     <div className="app-container">
@@ -43,7 +54,22 @@ const UIOverlay = ({
           <button className="btn btn-outline" onClick={() => onToggleFog()} style={{ color: showFog ? '#ff4b4b' : 'var(--accent-gold)' }}> {showFog ? <EyeOff size={16} /> : <Eye size={16} />} FOG </button>
           <button className="btn btn-outline" onClick={() => onToggleTorches()} style={{ color: showTorches ? '#ffb700' : 'var(--text-dim)' }}> <FlameKindling size={16} /> TORCHLIGHT </button>
           <button className="btn btn-outline" onClick={() => setShowGenPanel(!showGenPanel)} style={{ border: '1px solid var(--accent-purple)', color: 'var(--accent-purple)' }}> <Wand2 size={16} /> GENESIS LAB </button>
-          <div className="btn btn-outline" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1rem' }}> <MapPin size={16} /> {roomType.toUpperCase()} </div>
+          
+          <select 
+            className="input-field" 
+            style={{ width: '120px', padding: '0.4rem', fontSize: '0.7rem', background: 'rgba(0,0,0,0.8)', border: '1px solid rgba(255,255,255,0.1)' }}
+            value={roomType}
+            onChange={(e) => onRoomChange(e.target.value)}
+          >
+            <option value="dungeon">DUNGEON</option>
+            <option value="tavern">TAVERN</option>
+            <option value="forest">FOREST</option>
+            <option value="temple">TEMPLE</option>
+          </select>
+
+          <button className="btn" onClick={onSaveDungeon} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--accent-gold)', color: 'black' }}>
+            <Save size={16} /> SAVE SESSION
+          </button>
         </div>
       </motion.div>
 
@@ -74,7 +100,12 @@ const UIOverlay = ({
         
         <div style={{ marginTop: 'auto', borderTop: '1px dashed rgba(255,255,255,0.1)', paddingTop: '1rem' }}>
            <h3 style={{ fontSize: '0.8rem', color: 'var(--accent-gold)', display: 'flex', gap: '0.5rem', alignItems: 'center' }}><BrainCircuit size={16} /> ARCANE SAGE (AI DM)</h3>
-           <form onSubmit={handleSage} style={{ position: 'relative', marginTop: '0.75rem' }}>
+           <div style={{ display: 'flex', gap: '0.3rem', margin: '0.5rem 0' }}>
+              {['encounter', 'rules', 'synthesis'].map(m => (
+                 <button key={m} className="btn" style={{ padding: '4px 8px', fontSize: '9px', opacity: 0.8 }} onClick={() => handleSage(null, m)}>{m.toUpperCase()}</button>
+              ))}
+           </div>
+           <form onSubmit={(e) => { e.preventDefault(); handleSage(e, 'chat'); }} style={{ position: 'relative', marginTop: '0.75rem' }}>
               <input className="input-field" style={{ paddingRight: '40px', fontSize: '0.75rem' }} placeholder="Ask rules or quests..." value={sageMsg} onChange={(e) => setSageMsg(e.target.value)} disabled={isSageThinking} />
               <button type="submit" style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--accent-gold)' }}> {isSageThinking ? <Loader2 className="animate-spin" size={14} /> : <Search size={14} />} </button>
            </form>
@@ -89,13 +120,44 @@ const UIOverlay = ({
                </div>
                <div style={{ display: 'flex', gap: '4px' }}>
                   <input className="input-field" style={{ width: '40px', padding: '1px', textAlign: 'center', fontSize: '12px' }} value={hpMod} onChange={(e) => setHpMod(e.target.value)} />
+                  <button className="btn" style={{ padding: '4px', background: '#4b1818' }} onClick={() => onSetStatus(selectedChar.id, selectedChar.status === 'burning' ? null : 'burning')}> <Flame size={12} /> </button>
                   <button className="btn" style={{ padding: '4px', background: '#4b1818' }} onClick={() => onModifyHP(selectedChar.id, -parseInt(hpMod))}> <Minus size={12} /> </button>
                   <button className="btn" style={{ padding: '4px', background: '#1c4220' }} onClick={() => onModifyHP(selectedChar.id, parseInt(hpMod))}> <Plus size={12} /> </button>
                </div>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-               <button className="btn" style={{ background: '#4b1818', border: '1px solid #ff4b4b' }} onClick={() => onSetSpellTarget('fireball')}> <Target size={14} style={{ marginRight: '6px' }} /> FIREBALL </button>
-               <button className="btn btn-outline" style={{ border: '1.5px solid var(--accent-gold)' }} onClick={() => onCastSpell('#ff4b4b')}> ATTACK </button>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '4px', marginBottom: '1.5rem' }}>
+               {['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'].map(s => (
+                  <div key={s} className="stat-grid-item" style={{ padding: '4px' }}>
+                     <div style={{ fontSize: '7px', opacity: 0.5 }}>{s}</div>
+                     <div style={{ fontWeight: 'bold', fontSize: '11px' }}>{selectedChar.stats?.[s.toLowerCase()] || 10}</div>
+                  </div>
+               ))}
+            </div>
+            
+            <SoundRecorder entityName={selectedChar.name} onSave={(url) => onSaveSound(selectedChar.id, url)} />
+
+            <div style={{ display: 'flex', gap: '0.4rem', marginTop: '1rem' }}>
+               {['burning', 'poisoned', 'shielded'].map(s => (
+                  <button 
+                    key={s} 
+                    className="btn" 
+                    style={{ padding: '4px 8px', fontSize: '9px', background: selectedChar.status === s ? 'var(--accent-purple)' : '#222', border: '1px solid rgba(255,255,255,0.1)' }} 
+                    onClick={() => onSetStatus(selectedChar.id, selectedChar.status === s ? null : s)}
+                  >
+                    {s.toUpperCase()}
+                  </button>
+               ))}
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '1.5rem' }}>
+               <h4 style={{ fontSize: '0.7rem', color: 'var(--accent-gold)' }}>SPELLBOOK</h4>
+               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                  <button className="btn" style={{ background: '#4b1818', border: '1px solid #ff4b4b', fontSize: '10px' }} onClick={() => onSetSpellTarget('fireball')}> <Flame size={12} style={{ marginRight: '4px' }} /> FIREBALL </button>
+                  <button className="btn" style={{ background: '#1c4220', border: '1px solid #4bff4b', fontSize: '10px' }} onClick={() => onSetSpellTarget('restore')}> <CheckCircle2 size={12} style={{ marginRight: '4px' }} /> RESTORE </button>
+                  <button className="btn" style={{ background: '#1c2242', border: '1px solid #4169e1', fontSize: '10px' }} onClick={() => onSetSpellTarget('lightning')}> <Zap size={12} style={{ marginRight: '4px' }} /> BOLT </button>
+                  <button className="btn" style={{ background: '#421c42', border: '1px solid #da70d6', fontSize: '10px' }} onClick={() => onSetSpellTarget('shatter')}> <Wind size={12} style={{ marginRight: '4px' }} /> SHATTER </button>
+               </div>
             </div>
           </motion.div>
         )}
@@ -110,7 +172,32 @@ const UIOverlay = ({
           </div>
           <form onSubmit={(e) => { e.preventDefault(); if (message) { onSendMessage(message); setMessage(''); } }} style={{ display: 'flex', gap: '0.5rem' }}> <input className="input-field" placeholder="Party message..." value={message} onChange={(e) => setMessage(e.target.value)} /> <button type="submit" className="btn" style={{ padding: '0.6rem' }}><Send size={16} /></button> </form>
         </div>
-        <div className="dice-container" style={{ marginTop: '1rem' }}> {[4, 6, 8, 10, 12, 20].map(d => ( <button key={d} className="die-btn" style={{ padding: '1rem' }} onClick={() => onRollPhysics(d, `D${d}`)}> <Dices size={20} color="var(--accent-gold)" /> </button> ))} </div>
+        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
+          <div className="dice-container" style={{ flex: 1 }}> 
+            {[4, 6, 8, 10, 12, 20].map(d => ( 
+              <button key={d} className="die-btn" style={{ padding: '0.75rem' }} onClick={() => onRollPhysics(d, `D${d}`)}> 
+                <span style={{ fontSize: '10px', fontWeight: 'bold', color: 'var(--accent-gold)' }}>D{d}</span>
+              </button> 
+            ))} 
+          </div>
+          <button className="die-btn" style={{ padding: '0 1rem', background: 'rgba(255, 75, 75, 0.1)', color: '#ff4b4b' }} onClick={onClearDice}>
+            <Trash2 size={16} />
+          </button>
+        </div>
+        
+        {/* Genesis Lab Overlay */}
+        <AnimatePresence>
+          {showGenPanel && (
+            <motion.div 
+              initial={{ height: 0, opacity: 0 }} 
+              animate={{ height: 'auto', opacity: 1 }} 
+              exit={{ height: 0, opacity: 0 }}
+              style={{ overflow: 'hidden' }}
+            >
+              <MeshySpawner onSpawn={(prop) => { onSpawnProp(prop); setShowGenPanel(false); }} />
+            </motion.div>
+          )}
+        </AnimatePresence>
       </motion.div>
     </div>
   );
