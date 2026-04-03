@@ -34,14 +34,22 @@ const UIOverlay = ({
 
   const handleSage = async (e, mode = 'chat') => { 
     if (e) e.preventDefault();
-    const msg = sageMsg || (mode === 'encounter' ? `Generate an encounter for a ${roomType}` : (mode === 'synthesis' ? `Design a 3D prop for a ${roomType}` : (mode === 'rules' ? 'Explain a common combat rule' : '')));
+    const msg = sageMsg || (mode === 'encounter' ? `Generate an encounter for a ${roomType}` : (mode === 'synthesis' ? `Design a 3D prop for a ${roomType}` : (mode === 'rules' ? 'Explain a common combat rule' : (mode === 'mapping' ? `Architect a ${roomType} layout` : ''))));
     if (!msg || isSageThinking) return; 
     setSageMsg(''); 
     setIsSageThinking(true); 
     onSendMessage(`Consulting Sage in ${mode.toUpperCase()} mode...`); 
     try { 
       const res = await arcaneSage.summonResponse(msg, chatHistory, mode); 
-      onSendMessage(`${mode.toUpperCase()} Decree: ${res}`, 'Arcane Sage'); 
+      if (mode === 'mapping') {
+         try {
+            const props = JSON.parse(res);
+            props.forEach(p => onSpawnProp({ name: p.name, color: '#666', stats: { hp: 10 }, position: p.pos }));
+            onSendMessage(`The Sage has Architected a new realm layout!`, 'Arcane Sage');
+         } catch(e) { console.error('Mapping error:', e, res); onSendMessage(`Decree: ${res}`, 'Arcane Sage'); }
+      } else {
+         onSendMessage(`${mode.toUpperCase()} Decree: ${res}`, 'Arcane Sage'); 
+      }
     } finally { setIsSageThinking(false); } 
   };
 

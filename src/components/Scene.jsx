@@ -9,6 +9,53 @@ import * as THREE from 'three';
 import ModelLoader from './ModelLoader';
 import PhysicsDice from './PhysicsDice';
 
+const FogMask = ({ characters, size = 40 }) => {
+  const canvasRef = useRef(document.createElement('canvas'));
+  const textureRef = useRef();
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    canvas.width = size * 10;
+    canvas.height = size * 10;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }, []);
+
+  useFrame(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    
+    // Fade visibility if needed (for more realism) or just keep it revealed
+    // ctx.fillStyle = 'rgba(0,0,0,0.01)';
+    // ctx.fillRect(0,0, canvas.width, canvas.height);
+
+    characters.forEach(char => {
+      const x = (char.position[0] + 20) * 10;
+      const z = (char.position[2] + 20) * 10;
+      const gradient = ctx.createRadialGradient(x, z, 0, x, z, 60);
+      gradient.addColorStop(0, '#fff');
+      gradient.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.arc(x, z, 60, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    
+    if (textureRef.current) textureRef.current.needsUpdate = true;
+  });
+
+  return (
+    <mesh receiveShadow rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0]}>
+      <planeGeometry args={[size, size]} />
+      <meshBasicMaterial color="black" transparent opacity={0.8} depthWrite={false}>
+         <canvasTexture ref={textureRef} attach="alphaMap" image={canvasRef.current} />
+      </meshBasicMaterial>
+    </mesh>
+  );
+};
+
 const Token = ({ character, isSelected, onClick, onMove }) => {
   const meshRef = useRef();
   
@@ -219,6 +266,7 @@ const Scene = ({
            {characters.map((char, i) => ( <Token key={char.id ?? i} character={char} isSelected={(char.id ?? i) === selectedId} onClick={() => onSelectCharacter(char.id ?? i)} onMove={(pos) => onMoveCharacter(char.id ?? i, pos)} /> ))}
            {activeDice.map(d => ( <PhysicsDice key={d.id} sides={d.sides} position={d.position} onResult={(res) => onDiceResult(d.id, res)} /> ))}
         </Physics>
+        {showFog && <FogMask characters={characters} />}
         {vfxs.map(v => ( <SpellVFX key={v.id} {...v} onComplete={onCompleteVFX} /> ))}
         {alerts.map(a => ( <FloatingText key={a.id} id={a.id} text={a.text} position={a.position} color={a.color} onComplete={onCompleteAlert} /> ))}
         {activeSpell === 'fireball' && ( <AoETargeter onCast={(pos) => onCastSpell(pos, '#ff4b4b')} /> )}
